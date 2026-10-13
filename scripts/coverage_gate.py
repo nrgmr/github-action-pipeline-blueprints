@@ -292,6 +292,9 @@ def main(argv: list[str] | None = None) -> int:
         changed_files = changed[1]
         rows.append(evaluate_changed(changed[0], changed_files, args.min_changed_coverage))
     summary = render_summary(rows, changed_files, args.min_changed_coverage)
+    # The marks are not encodable in a legacy Windows console codepage.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print(summary)
     if args.summary_file:
         args.summary_file.write_text(summary, encoding="utf-8")
