@@ -32,7 +32,7 @@ on:
         type: string
         default: "1"
       min-changed-coverage:
-        description: "Minimum combined line coverage percentage of the files a pull request changes. Runs only on pull_request events and ignores changed files the report does not cover. Empty disables."
+        description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
         type: string
         default: ""
       fail-on-threshold:

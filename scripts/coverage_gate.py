@@ -10,10 +10,10 @@ must not exceed the baseline by more than that many percentage points, so a chan
 that raises coverage also raises the file. It applies only when a baseline exists.
 
 A fourth check holds new work to a standard regardless of the overall figure. With
---min-changed-coverage and --changed-files (a file of repo-relative paths, one per line),
-the combined line coverage of the changed files that appear in the report must be
->= that minimum. Changed files the report does not cover, such as tests or docs, are
-ignored, and the check is skipped when none appear in it.
+--min-changed-coverage and --diff (the output of `git diff -U0`), the combined line
+coverage of the lines the diff adds or modifies must be >= that minimum. Only lines the
+report marks as executable count, so comments, tests and docs are ignored, and the check
+is skipped when no changed line appears in the report.
 
 With --warn-only a violation is reported as a warning and the exit code stays 0,
 so teams can adopt the gate without failing their jobs.
@@ -26,12 +26,13 @@ Exit codes:
 Usage:
     python3 coverage_gate.py <report> --min-coverage 80 \\
         [--baseline coverage-baseline.json] [--baseline-margin 1] \\
-        [--changed-files changed.txt --min-changed-coverage 80] [--summary-file summary.md] \\
+        [--diff changes.diff --min-changed-coverage 80] [--summary-file summary.md] \\
         [--warn-only]
 """
 
 import argparse
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -101,56 +102,49 @@ def _normalise(path: str) -> str:
     return path[2:] if path.startswith("./") else path
 
 
-def _files_xml(path: Path) -> dict[str, tuple[int, int]]:
+def _lines_xml(path: Path) -> dict[str, dict[int, bool]]:
     root = ET.parse(path).getroot()
+    files: dict[str, dict[int, bool]] = {}
     if root.tag == "report":
         # JaCoCo names a file by its package directory plus the source file name.
-        files = {}
         for package in root.findall("package"):
             for source in package.findall("sourcefile"):
-                for counter in source.findall("counter"):
-                    if counter.get("type") == "LINE":
-                        covered = int(counter.get("covered", 0))
-                        total = covered + int(counter.get("missed", 0))
-                        name = f"{package.get('name', '')}/{source.get('name')}"
-                        files[_normalise(name).lstrip("/")] = (covered, total)
+                name = f"{package.get('name', '')}/{source.get('name')}"
+                lines = files.setdefault(_normalise(name).lstrip("/"), {})
+                for line in source.findall("line"):
+                    lines[int(line.get("nr", 0))] = int(line.get("ci", 0)) > 0
         return files
     if root.tag == "coverage":
-        # Inner classes share a file, so merge by line number before counting.
-        lines: dict[str, dict[str, bool]] = {}
+        # Inner classes share a file, so merge by line number.
         for cls in root.iter("class"):
-            seen = lines.setdefault(_normalise(cls.get("filename", "")), {})
+            lines = files.setdefault(_normalise(cls.get("filename", "")), {})
             for line in cls.iter("line"):
-                number = line.get("number", "")
-                seen[number] = seen.get(number, False) or int(line.get("hits", 0)) > 0
-        return {name: (sum(hit.values()), len(hit)) for name, hit in lines.items()}
+                number = int(line.get("number", 0))
+                lines[number] = lines.get(number, False) or int(line.get("hits", 0)) > 0
+        return files
     raise GateError(f"{path}: not a recognised JaCoCo or Cobertura report")
 
 
-def _files_lcov(path: Path) -> dict[str, tuple[int, int]]:
-    files: dict[str, tuple[int, int]] = {}
-    name = ""
-    found = hit = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("SF:"):
-            name, found, hit = _normalise(line[3:]), 0, 0
-        elif line.startswith("LF:"):
-            found = int(line[3:])
-        elif line.startswith("LH:"):
-            hit = int(line[3:])
-        elif line == "end_of_record" and name:
-            covered, total = files.get(name, (0, 0))
-            files[name] = (covered + hit, total + found)
+def _lines_lcov(path: Path) -> dict[str, dict[int, bool]]:
+    files: dict[str, dict[int, bool]] = {}
+    lines: dict[int, bool] | None = None
+    for row in path.read_text(encoding="utf-8").splitlines():
+        if row.startswith("SF:"):
+            lines = files.setdefault(_normalise(row[3:]), {})
+        elif row.startswith("DA:") and lines is not None:
+            number, hits = row[3:].split(",")[:2]
+            lines[int(number)] = lines.get(int(number), False) or int(hits) > 0
+        elif row == "end_of_record":
+            lines = None
     return files
 
 
-def file_coverage(path: Path) -> dict[str, tuple[int, int]]:
-    """Return (covered lines, total lines) for each file in the report, keyed by its path."""
+def line_coverage(path: Path) -> dict[str, dict[int, bool]]:
+    """Return whether each executable line is covered, keyed by file path then line number."""
     try:
-        files = _files_xml(path) if path.suffix == ".xml" else _files_lcov(path)
+        return _lines_xml(path) if path.suffix == ".xml" else _lines_lcov(path)
     except (ET.ParseError, ValueError) as exc:
         raise GateError(f"{path}: unreadable coverage report ({exc})") from exc
-    return files
 
 
 def _same_file(changed: str, reported: str) -> bool:
@@ -161,23 +155,47 @@ def _same_file(changed: str, reported: str) -> bool:
     )
 
 
-def changed_coverage(
-    report: Path, changed_files: Path
-) -> tuple[float, dict[str, tuple[int, int]]] | None:
-    """Return combined coverage of the changed files in the report and each file's counts.
+_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
-    Returns None when no changed file is in the report.
+
+def changed_lines(diff: Path) -> dict[str, set[int]]:
+    """Return the added or modified line numbers of each file in a `git diff -U0`."""
+    if not diff.is_file():
+        raise GateError(f"diff not found: {diff}")
+    changed: dict[str, set[int]] = {}
+    lines: set[int] | None = None
+    # A removed or added line can start with "--- " or "+++ ", so a file path counts only
+    # in the header between "diff --git" and the first hunk.
+    in_header = False
+    for row in diff.read_text(encoding="utf-8").splitlines():
+        if row.startswith("diff --git "):
+            in_header, lines = True, None
+        elif in_header and row.startswith("+++ "):
+            target = row[4:].split("\t")[0]
+            if target != "/dev/null":
+                lines = changed.setdefault(_normalise(target.removeprefix("b/")), set())
+        elif row.startswith("@@"):
+            in_header = False
+            hunk = _HUNK.match(row)
+            if lines is not None and hunk:
+                start, count = int(hunk[1]), int(hunk[2] or 1)
+                lines.update(range(start, start + count))
+    return changed
+
+
+def changed_coverage(report: Path, diff: Path) -> tuple[float, dict[str, tuple[int, int]]] | None:
+    """Return combined coverage of the changed lines in the report and each file's counts.
+
+    Only changed lines the report marks as executable count, so comments, blank lines and
+    imports do not. Returns None when no such line exists.
     """
-    if not changed_files.is_file():
-        raise GateError(f"changed files list not found: {changed_files}")
-    changed = [_normalise(line) for line in changed_files.read_text(encoding="utf-8").splitlines()]
-    changed = [name for name in changed if name]
-    # A file with no executable lines, such as an interface, says nothing about coverage.
-    matched = {
-        name: counts
-        for name, counts in file_coverage(report).items()
-        if counts[1] > 0 and any(_same_file(c, name) for c in changed)
-    }
+    changed = changed_lines(diff)
+    matched = {}
+    for name, hits in line_coverage(report).items():
+        wanted = set().union(*(lines for path, lines in changed.items() if _same_file(path, name)))
+        counted = [hits[number] for number in wanted if number in hits]
+        if counted:
+            matched[name] = (sum(counted), len(counted))
     if not matched:
         return None
     covered = sum(c for c, _ in matched.values())
@@ -217,8 +235,10 @@ def evaluate(
 def evaluate_changed(
     percent: float, files: dict[str, tuple[int, int]], min_changed: float
 ) -> tuple[str, str, bool]:
-    detail = f"{percent:.2f}% across {len(files)} files (min {min_changed:g}%)"
-    return ("Changed files", detail, percent >= min_changed)
+    covered = sum(c for c, _ in files.values())
+    total = sum(t for _, t in files.values())
+    detail = f"{percent:.2f}% ({covered}/{total} lines in {len(files)} files, min {min_changed:g}%)"
+    return ("Changed lines", detail, percent >= min_changed)
 
 
 PASS_MARK = "✅"
@@ -237,15 +257,18 @@ def render_summary(
         f"| {name} | {detail} | {PASS_MARK if ok else FAIL_MARK} |" for name, detail, ok in rows
     ]
     if files:
-        # The changed-files figure is a combined one, so list the files with the lowest
+        # The changed-lines figure is a combined one, so list the files with the lowest
         # coverage first to point at where tests are missing.
-        ranked = sorted((covered * 100 / total, name) for name, (covered, total) in files.items())
-        lines += ["", "| File | Coverage | Status |", "| --- | --- | --- |"]
-        for percent, name in ranked[:MAX_FILE_ROWS]:
+        ranked = sorted(
+            (covered * 100 / total, name, covered, total)
+            for name, (covered, total) in files.items()
+        )
+        lines += ["", "| File | Changed lines covered | Status |", "| --- | --- | --- |"]
+        for percent, name, covered, total in ranked[:MAX_FILE_ROWS]:
             status = (
                 "" if min_changed is None else PASS_MARK if percent >= min_changed else FAIL_MARK
             )
-            lines.append(f"| `{name}` | {percent:.2f}% | {status} |")
+            lines.append(f"| `{name}` | {percent:.2f}% ({covered}/{total}) | {status} |")
         if len(ranked) > MAX_FILE_ROWS:
             lines += ["", f"{len(ranked) - MAX_FILE_ROWS} more changed files are not shown."]
     return "\n".join(lines) + "\n"
@@ -257,22 +280,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-coverage", type=float, required=True)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--baseline-margin", type=float)
-    parser.add_argument("--changed-files", type=Path)
+    parser.add_argument("--diff", type=Path)
     parser.add_argument("--min-changed-coverage", type=float)
     parser.add_argument("--summary-file", type=Path)
     parser.add_argument("--warn-only", action="store_true")
     args = parser.parse_args(argv)
     if args.baseline_margin is not None and args.baseline_margin < 0:
         parser.error("--baseline-margin must not be negative")
-    if (args.changed_files is None) != (args.min_changed_coverage is None):
-        parser.error("--changed-files and --min-changed-coverage must be used together")
+    if (args.diff is None) != (args.min_changed_coverage is None):
+        parser.error("--diff and --min-changed-coverage must be used together")
 
     changed = None
     try:
         overall = overall_coverage(args.report)
         baseline = read_baseline(args.baseline) if args.baseline else None
-        if args.changed_files:
-            changed = changed_coverage(args.report, args.changed_files)
+        if args.diff:
+            changed = changed_coverage(args.report, args.diff)
     except GateError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -283,10 +306,10 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = evaluate(overall, args.min_coverage, baseline, args.baseline_margin)
     changed_files = None
-    if args.changed_files and changed is None:
+    if args.diff and changed is None:
         print(
-            "::notice::No changed file appears in the coverage report; "
-            "the changed files check is skipped."
+            "::notice::No changed line appears in the coverage report; "
+            "the changed lines check is skipped."
         )
     elif changed is not None:
         changed_files = changed[1]

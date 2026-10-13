@@ -64,11 +64,19 @@ class TestOverallCoverage:
             coverage_gate.overall_coverage(tmp_path / "nope.xml")
 
 
-JACOCO_FILES = """<?xml version="1.0"?>
+def _jacoco_lines(*covered: bool) -> str:
+    return "".join(
+        f'<line nr="{number}" mi="{0 if hit else 1}" ci="{1 if hit else 0}"/>'
+        for number, hit in enumerate(covered, 1)
+    )
+
+
+# A.java: lines 1-9 covered and 10 missed. B.java: lines 1-5 covered and 6-10 missed.
+JACOCO_FILES = f"""<?xml version="1.0"?>
 <report name="x">
 <package name="com/acme">
-<sourcefile name="A.java"><counter type="LINE" missed="1" covered="9"/></sourcefile>
-<sourcefile name="B.java"><counter type="LINE" missed="5" covered="5"/></sourcefile>
+<sourcefile name="A.java">{_jacoco_lines(*[True] * 9, False)}</sourcefile>
+<sourcefile name="B.java">{_jacoco_lines(*[True] * 5, *[False] * 5)}</sourcefile>
 <sourcefile name="I.java"><counter type="BRANCH" missed="0" covered="0"/></sourcefile></package>
 <counter type="LINE" missed="6" covered="14"/></report>"""
 
@@ -81,76 +89,162 @@ COBERTURA_FILES = """<coverage lines-valid="4" lines-covered="3">
 <class filename="app/b.py"><lines><line number="1" hits="0"/></lines></class>
 </classes></package></packages></coverage>"""
 
+LCOV_LINES = (
+    "SF:a.ts\nDA:1,3\nDA:2,0,checksum\nend_of_record\nSF:a.ts\nDA:2,1\nDA:3,0\nend_of_record\n"
+)
 
-def changed_list(tmp_path: Path, *names: str) -> Path:
-    return write(tmp_path, "changed.txt", "\n".join(names) + "\n")
+
+def diff_for(tmp_path: Path, changes: dict[str, list[str]]) -> Path:
+    """Write a `git diff -U0` that changes each file at the given hunks, such as "1,10" or "4"."""
+    rows = []
+    for name, hunks in changes.items():
+        rows += [f"diff --git a/{name} b/{name}", f"--- a/{name}", f"+++ b/{name}"]
+        rows += [f"@@ -0,0 +{hunk} @@" for hunk in hunks]
+    return write(tmp_path, "changes.diff", "\n".join(rows) + "\n")
 
 
-class TestFileCoverage:
-    def test_jacoco_joins_package_and_source_file(self, tmp_path):
-        files = coverage_gate.file_coverage(write(tmp_path, "j.xml", JACOCO_FILES))
-        assert files == {"com/acme/A.java": (9, 10), "com/acme/B.java": (5, 10)}
+class TestLineCoverage:
+    def test_jacoco_reads_each_line_of_a_source_file(self, tmp_path):
+        lines = coverage_gate.line_coverage(write(tmp_path, "j.xml", JACOCO_FILES))
+        assert lines["com/acme/A.java"] == {**{n: True for n in range(1, 10)}, 10: False}
+        assert lines["com/acme/B.java"] == {n: n <= 5 for n in range(1, 11)}
+        assert lines["com/acme/I.java"] == {}
 
     def test_cobertura_merges_classes_sharing_a_file(self, tmp_path):
-        files = coverage_gate.file_coverage(write(tmp_path, "c.xml", COBERTURA_FILES))
-        assert files == {"app/a.py": (3, 3), "app/b.py": (0, 1)}
+        lines = coverage_gate.line_coverage(write(tmp_path, "c.xml", COBERTURA_FILES))
+        assert lines == {"app/a.py": {1: True, 2: True, 3: True}, "app/b.py": {1: False}}
 
-    def test_lcov_reads_each_record(self, tmp_path):
-        files = coverage_gate.file_coverage(write(tmp_path, "lcov.info", LCOV))
-        assert files == {"a.ts": (9, 10), "b.ts": (5, 10)}
+    def test_lcov_merges_records_for_one_file(self, tmp_path):
+        lines = coverage_gate.line_coverage(write(tmp_path, "lcov.info", LCOV_LINES))
+        assert lines == {"a.ts": {1: True, 2: True, 3: False}}
 
     def test_unknown_xml_root_errors(self, tmp_path):
         with pytest.raises(coverage_gate.GateError):
-            coverage_gate.file_coverage(write(tmp_path, "x.xml", "<other/>"))
+            coverage_gate.line_coverage(write(tmp_path, "x.xml", "<other/>"))
+
+
+class TestChangedLines:
+    def test_reads_added_ranges_and_ignores_deletions(self, tmp_path):
+        diff = write(
+            tmp_path,
+            "d.diff",
+            "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n"
+            "@@ -3 +3 @@\n-old\n+new\n"
+            "@@ -10,2 +12,3 @@\n"
+            "@@ -20,2 +25,0 @@\n-gone\n-gone\n",
+        )
+        assert coverage_gate.changed_lines(diff) == {"x.py": {3, 12, 13, 14}}
+
+    def test_deleted_files_are_skipped(self, tmp_path):
+        diff = write(
+            tmp_path,
+            "d.diff",
+            "diff --git a/x.py b/x.py\n--- a/x.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n",
+        )
+        assert coverage_gate.changed_lines(diff) == {}
+
+    def test_strips_the_tab_git_adds_after_a_path_with_spaces(self, tmp_path):
+        diff = write(
+            tmp_path,
+            "d.diff",
+            "diff --git a/my file.py b/my file.py\n--- a/my file.py\t\n+++ b/my file.py\t\n"
+            "@@ -1 +1 @@\n",
+        )
+        assert coverage_gate.changed_lines(diff) == {"my file.py": {1}}
+
+    def test_a_line_that_looks_like_a_header_is_content(self, tmp_path):
+        diff = write(
+            tmp_path,
+            "d.diff",
+            "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n"
+            "@@ -1 +1,2 @@\n+++ b/other.py\n+text\n",
+        )
+        assert coverage_gate.changed_lines(diff) == {"x.py": {1, 2}}
+
+    def test_missing_diff_errors(self, tmp_path):
+        with pytest.raises(coverage_gate.GateError):
+            coverage_gate.changed_lines(tmp_path / "nope.diff")
 
 
 class TestChangedCoverage:
-    def test_combines_matching_files_only(self, tmp_path):
+    def test_counts_only_changed_executable_lines(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "svc/src/main/java/com/acme/B.java", "README.md")
-        percent, files = coverage_gate.changed_coverage(report, changed)
-        assert percent == 50.0
-        assert list(files) == ["com/acme/B.java"]
+        diff = diff_for(
+            tmp_path,
+            {"svc/src/main/java/com/acme/B.java": ["1,3", "6"], "README.md": ["1,5"]},
+        )
+        percent, files = coverage_gate.changed_coverage(report, diff)
+        assert percent == 75.0
+        assert files == {"com/acme/B.java": (3, 4)}
+
+    def test_an_untested_edit_in_a_well_covered_file_fails(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO_FILES)
+        diff = diff_for(tmp_path, {"com/acme/A.java": ["10"]})
+        percent, _ = coverage_gate.changed_coverage(report, diff)
+        assert percent == 0.0
+
+    def test_lines_the_report_does_not_list_are_ignored(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO_FILES)
+        diff = diff_for(tmp_path, {"com/acme/B.java": ["1,5", "40,3"]})
+        percent, files = coverage_gate.changed_coverage(report, diff)
+        assert (percent, files) == (100.0, {"com/acme/B.java": (5, 5)})
 
     def test_sums_lines_across_files_rather_than_averaging(self, tmp_path):
-        report = write(
-            tmp_path,
-            "lcov.info",
-            "SF:a.ts\nLF:90\nLH:90\nend_of_record\nSF:b.ts\nLF:10\nLH:0\nend_of_record\n",
-        )
-        percent, _ = coverage_gate.changed_coverage(report, changed_list(tmp_path, "a.ts", "b.ts"))
+        covered = "".join(f"DA:{n},1\n" for n in range(1, 91))
+        missed = "".join(f"DA:{n},0\n" for n in range(1, 11))
+        body = f"SF:a.ts\n{covered}end_of_record\nSF:b.ts\n{missed}end_of_record\n"
+        report = write(tmp_path, "lcov.info", body)
+        diff = diff_for(tmp_path, {"a.ts": ["1,90"], "b.ts": ["1,10"]})
+        percent, _ = coverage_gate.changed_coverage(report, diff)
         assert percent == 90.0
 
-    def test_no_match_returns_none(self, tmp_path):
+    def test_no_matching_file_returns_none(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        assert coverage_gate.changed_coverage(report, changed_list(tmp_path, "docs/x.md")) is None
+        assert (
+            coverage_gate.changed_coverage(report, diff_for(tmp_path, {"docs/x.md": ["1,5"]}))
+            is None
+        )
 
     def test_does_not_match_on_a_partial_file_name(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "src/com/acme/XA.java")
-        assert coverage_gate.changed_coverage(report, changed) is None
+        diff = diff_for(tmp_path, {"src/com/acme/XA.java": ["1,5"]})
+        assert coverage_gate.changed_coverage(report, diff) is None
+
+    def test_changes_with_no_executable_line_return_none(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO_FILES)
+        assert (
+            coverage_gate.changed_coverage(
+                report, diff_for(tmp_path, {"com/acme/A.java": ["50,5"]})
+            )
+            is None
+        )
+
+    def test_a_deletion_only_hunk_returns_none(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO_FILES)
+        assert (
+            coverage_gate.changed_coverage(report, diff_for(tmp_path, {"com/acme/A.java": ["3,0"]}))
+            is None
+        )
 
     def test_absolute_report_paths_match_relative_changes(self, tmp_path):
         report = write(
             tmp_path,
             "lcov.info",
-            "SF:/home/runner/work/r/r/ui/src/a.ts\nLF:4\nLH:2\nend_of_record\n",
+            "SF:/home/runner/work/r/r/ui/src/a.ts\nDA:1,1\nDA:2,0\nend_of_record\n",
         )
-        percent, _ = coverage_gate.changed_coverage(report, changed_list(tmp_path, "ui/src/a.ts"))
+        percent, _ = coverage_gate.changed_coverage(
+            report, diff_for(tmp_path, {"ui/src/a.ts": ["1,2"]})
+        )
         assert percent == 50.0
 
     def test_windows_separators_are_normalised(self, tmp_path):
-        report = write(tmp_path, "lcov.info", "SF:src\\a.ts\nLF:4\nLH:2\nend_of_record\n")
-        assert coverage_gate.changed_coverage(report, changed_list(tmp_path, "ui/src/a.ts"))
+        report = write(tmp_path, "lcov.info", "SF:src\\a.ts\nDA:1,1\nend_of_record\n")
+        assert coverage_gate.changed_coverage(report, diff_for(tmp_path, {"ui/src/a.ts": ["1"]}))
 
-    def test_files_without_executable_lines_are_ignored(self, tmp_path):
-        report = write(tmp_path, "lcov.info", "SF:a.ts\nLF:0\nLH:0\nend_of_record\n")
-        assert coverage_gate.changed_coverage(report, changed_list(tmp_path, "a.ts")) is None
-
-    def test_missing_list_errors(self, tmp_path):
+    def test_missing_diff_errors(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
         with pytest.raises(coverage_gate.GateError):
-            coverage_gate.changed_coverage(report, tmp_path / "nope.txt")
+            coverage_gate.changed_coverage(report, tmp_path / "nope.diff")
 
 
 class TestBaseline:
@@ -219,13 +313,13 @@ class TestRenderSummary:
         files = {"a/Full.java": (10, 10), "b/Low.java": (1, 10)}
         lines = coverage_gate.render_summary(self.ROWS, files, 50).splitlines()
         assert lines[-2:] == [
-            "| `b/Low.java` | 10.00% | ❌ |",
-            "| `a/Full.java` | 100.00% | ✅ |",
+            "| `b/Low.java` | 10.00% (1/10) | ❌ |",
+            "| `a/Full.java` | 100.00% (10/10) | ✅ |",
         ]
 
     def test_status_is_blank_without_a_changed_threshold(self):
         summary = coverage_gate.render_summary(self.ROWS, {"a/Full.java": (10, 10)})
-        assert "| `a/Full.java` | 100.00% |  |" in summary
+        assert "| `a/Full.java` | 100.00% (10/10) |  |" in summary
 
     def test_caps_file_rows_and_reports_the_rest(self):
         files = {f"f{i}.java": (i, 100) for i in range(coverage_gate.MAX_FILE_ROWS + 3)}
@@ -317,41 +411,41 @@ class TestMain:
     def test_unreadable_report_exits_one(self, tmp_path):
         assert coverage_gate.main([str(tmp_path / "nope.xml"), "--min-coverage", "80"]) == 1
 
-    def test_changed_files_below_minimum_exits_two(self, tmp_path, capsys):
+    def test_changed_lines_below_minimum_exits_two(self, tmp_path, capsys):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "com/acme/B.java")
-        args = [str(report), "--min-coverage", "50", "--changed-files", str(changed)]
+        changed = diff_for(tmp_path, {"com/acme/B.java": ["1,10"]})
+        args = [str(report), "--min-coverage", "50", "--diff", str(changed)]
         assert coverage_gate.main([*args, "--min-changed-coverage", "80"]) == 2
         captured = capsys.readouterr()
-        assert "Changed files" in captured.err
-        assert "| `com/acme/B.java` | 50.00% | ❌ |" in captured.out
+        assert "Changed lines" in captured.err
+        assert "| `com/acme/B.java` | 50.00% (5/10) | ❌ |" in captured.out
 
-    def test_changed_files_meeting_minimum_passes(self, tmp_path):
+    def test_changed_lines_meeting_minimum_passes(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "com/acme/A.java")
-        args = [str(report), "--min-coverage", "50", "--changed-files", str(changed)]
+        changed = diff_for(tmp_path, {"com/acme/A.java": ["1,10"]})
+        args = [str(report), "--min-coverage", "50", "--diff", str(changed)]
         assert coverage_gate.main([*args, "--min-changed-coverage", "80"]) == 0
 
-    def test_changed_files_outside_the_report_skip_with_a_notice(self, tmp_path, capsys):
+    def test_changed_lines_outside_the_report_skip_with_a_notice(self, tmp_path, capsys):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "docs/x.md")
-        args = [str(report), "--min-coverage", "50", "--changed-files", str(changed)]
+        changed = diff_for(tmp_path, {"docs/x.md": ["1,5"]})
+        args = [str(report), "--min-coverage", "50", "--diff", str(changed)]
         assert coverage_gate.main([*args, "--min-changed-coverage", "99"]) == 0
-        assert "::notice::No changed file" in capsys.readouterr().out
+        assert "::notice::No changed line" in capsys.readouterr().out
 
-    def test_changed_files_violation_under_warn_only_exits_zero(self, tmp_path):
+    def test_changed_lines_violation_under_warn_only_exits_zero(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
-        changed = changed_list(tmp_path, "com/acme/B.java")
-        args = [str(report), "--min-coverage", "50", "--changed-files", str(changed)]
+        changed = diff_for(tmp_path, {"com/acme/B.java": ["1,10"]})
+        args = [str(report), "--min-coverage", "50", "--diff", str(changed)]
         assert coverage_gate.main([*args, "--min-changed-coverage", "80", "--warn-only"]) == 0
 
-    def test_missing_changed_list_exits_one(self, tmp_path):
+    def test_missing_diff_exits_one(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)
         args = [str(report), "--min-coverage", "50", "--min-changed-coverage", "80"]
         with pytest.raises(SystemExit) as exc:
             coverage_gate.main(args)
         assert exc.value.code == 1
-        args = [*args, "--changed-files", str(tmp_path / "nope.txt")]
+        args = [*args, "--diff", str(tmp_path / "nope.diff")]
         assert coverage_gate.main(args) == 1
 
     def test_bad_argument_exits_one_not_two(self, tmp_path):

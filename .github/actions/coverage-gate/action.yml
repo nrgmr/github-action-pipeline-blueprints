@@ -1,6 +1,6 @@
 name: Coverage Gate
 description: >
-  Apply overall, ratchet, and changed-file coverage thresholds to a JaCoCo,
+  Apply overall, ratchet, and changed-line coverage thresholds to a JaCoCo,
   Cobertura, or LCOV report. Language-agnostic - call from any test workflow
   after it has produced a coverage report.
 
@@ -21,7 +21,7 @@ inputs:
     description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
     default: "1"
   min-changed-coverage:
-    description: "Minimum combined line coverage percentage of the files a pull request changes. Runs only on pull_request events and ignores changed files the report does not cover. Empty disables."
+    description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
     default: ""
   fail-on-threshold:
     description: "Fail the job on a threshold violation. When false the violation is reported as a warning."
@@ -30,7 +30,7 @@ inputs:
     description: "Post the result as a pull request comment. The calling job needs pull-requests: write."
     default: "false"
   github-token:
-    description: "Token used to fetch the base commit for the changed files check and to post the pull request comment"
+    description: "Token used to fetch the base commit for the changed lines check and to post the pull request comment"
     default: ${{ github.token }}
 
 runs:
@@ -89,18 +89,21 @@ runs:
             # sides are single commits, which needs no merge base. HEAD is the merge
             # commit, so the diff is what the pull request would add. --relative keeps
             # only files under working-directory, so another project's file with the
-            # same name cannot match this project's report.
+            # same name cannot match this project's report. -U0 leaves only the changed
+            # lines, and the explicit prefixes keep the paths the same whatever the
+            # caller's git config says.
             # Callers check out with persist-credentials: false, so authenticate this one
             # fetch with the token instead of leaving it in .git/config for every step.
             auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
             echo "::add-mask::$auth"
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
               fetch --no-tags --depth=1 origin "$BASE_SHA"
-            changed_files="$RUNNER_TEMP/changed-files.txt"
-            git diff --name-only --relative --diff-filter=d "$BASE_SHA" HEAD > "$changed_files"
-            args+=(--changed-files "$changed_files" --min-changed-coverage "$MIN_CHANGED_COVERAGE")
+            diff_file="$RUNNER_TEMP/changed-lines.diff"
+            git -c core.quotepath=false diff -U0 --no-color --no-ext-diff --relative \
+              --src-prefix=a/ --dst-prefix=b/ --diff-filter=d "$BASE_SHA" HEAD > "$diff_file"
+            args+=(--diff "$diff_file" --min-changed-coverage "$MIN_CHANGED_COVERAGE")
           else
-            echo "::notice::min-changed-coverage applies only to pull_request events; the changed files check is skipped."
+            echo "::notice::min-changed-coverage applies only to pull_request events; the changed lines check is skipped."
           fi
         fi
         if [ "$FAIL_ON_THRESHOLD" != "true" ]; then
