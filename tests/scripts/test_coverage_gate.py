@@ -212,6 +212,31 @@ class TestEvaluate:
         assert coverage_gate.evaluate(83.2, 80, 83.2, 0)[-1][2] is True
 
 
+class TestRenderSummary:
+    ROWS = [("Overall", "80.00% (min 80%)", True)]
+
+    def test_lists_files_lowest_coverage_first_with_status(self):
+        files = {"a/Full.java": (10, 10), "b/Low.java": (1, 10)}
+        lines = coverage_gate.render_summary(self.ROWS, files, 50).splitlines()
+        assert lines[-2:] == [
+            "| `b/Low.java` | 10.00% | ❌ |",
+            "| `a/Full.java` | 100.00% | ✅ |",
+        ]
+
+    def test_status_is_blank_without_a_changed_threshold(self):
+        summary = coverage_gate.render_summary(self.ROWS, {"a/Full.java": (10, 10)})
+        assert "| `a/Full.java` | 100.00% |  |" in summary
+
+    def test_caps_file_rows_and_reports_the_rest(self):
+        files = {f"f{i}.java": (i, 100) for i in range(coverage_gate.MAX_FILE_ROWS + 3)}
+        summary = coverage_gate.render_summary(self.ROWS, files, 50)
+        assert summary.count("| `f") == coverage_gate.MAX_FILE_ROWS
+        assert "3 more changed files are not shown." in summary
+
+    def test_omits_file_table_without_changed_files(self):
+        assert "| File |" not in coverage_gate.render_summary(self.ROWS)
+
+
 class TestMain:
     def test_pass_writes_summary(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO)
@@ -220,7 +245,7 @@ class TestMain:
             [str(report), "--min-coverage", "80", "--summary-file", str(summary)]
         )
         assert code == 0
-        assert "| Overall | 80.00% (min 80%) | Pass |" in summary.read_text()
+        assert "| Overall | 80.00% (min 80%) | ✅ |" in summary.read_text(encoding="utf-8")
 
     def test_violation_exits_two(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO)
@@ -299,7 +324,7 @@ class TestMain:
         assert coverage_gate.main([*args, "--min-changed-coverage", "80"]) == 2
         captured = capsys.readouterr()
         assert "Changed files" in captured.err
-        assert "`com/acme/B.java`: 50.00%" in captured.out
+        assert "| `com/acme/B.java` | 50.00% | ❌ |" in captured.out
 
     def test_changed_files_meeting_minimum_passes(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO_FILES)

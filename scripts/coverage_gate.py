@@ -221,22 +221,33 @@ def evaluate_changed(
     return ("Changed files", detail, percent >= min_changed)
 
 
+PASS_MARK = "✅"
+FAIL_MARK = "❌"
+# A pull request can touch hundreds of files, and a comment that long goes unread.
+MAX_FILE_ROWS = 20
+
+
 def render_summary(
-    rows: list[tuple[str, str, bool]], files: dict[str, tuple[int, int]] | None = None
+    rows: list[tuple[str, str, bool]],
+    files: dict[str, tuple[int, int]] | None = None,
+    min_changed: float | None = None,
 ) -> str:
     lines = ["### Coverage", "", "| Check | Result | Status |", "| --- | --- | --- |"]
-    lines += [f"| {name} | {detail} | {'Pass' if ok else 'Fail'} |" for name, detail, ok in rows]
-    # The changed-files figure is a combined one, so name the files pulling it down.
-    gaps = sorted(
-        (
-            (covered * 100 / total, name)
-            for name, (covered, total) in (files or {}).items()
-            if covered < total
-        )
-    )[:5]
-    if gaps:
-        lines += ["", "Least covered changed files:", ""]
-        lines += [f"- `{name}`: {percent:.2f}%" for percent, name in gaps]
+    lines += [
+        f"| {name} | {detail} | {PASS_MARK if ok else FAIL_MARK} |" for name, detail, ok in rows
+    ]
+    if files:
+        # The changed-files figure is a combined one, so list the files with the lowest
+        # coverage first to point at where tests are missing.
+        ranked = sorted((covered * 100 / total, name) for name, (covered, total) in files.items())
+        lines += ["", "| File | Coverage | Status |", "| --- | --- | --- |"]
+        for percent, name in ranked[:MAX_FILE_ROWS]:
+            status = (
+                "" if min_changed is None else PASS_MARK if percent >= min_changed else FAIL_MARK
+            )
+            lines.append(f"| `{name}` | {percent:.2f}% | {status} |")
+        if len(ranked) > MAX_FILE_ROWS:
+            lines += ["", f"{len(ranked) - MAX_FILE_ROWS} more changed files are not shown."]
     return "\n".join(lines) + "\n"
 
 
@@ -280,10 +291,10 @@ def main(argv: list[str] | None = None) -> int:
     elif changed is not None:
         changed_files = changed[1]
         rows.append(evaluate_changed(changed[0], changed_files, args.min_changed_coverage))
-    summary = render_summary(rows, changed_files)
+    summary = render_summary(rows, changed_files, args.min_changed_coverage)
     print(summary)
     if args.summary_file:
-        args.summary_file.write_text(summary)
+        args.summary_file.write_text(summary, encoding="utf-8")
 
     if all(ok for _, _, ok in rows):
         return 0
