@@ -14,6 +14,9 @@ inputs:
   min-coverage:
     description: "Minimum overall line coverage percentage"
     default: "80"
+  coverage-metric:
+    description: "Metric behind min-coverage, the ratchet, and the baseline margin: `line` or `instruction`. `instruction` works only with a JaCoCo report. The changed lines check is always line based."
+    default: "line"
   baseline-path:
     description: "JSON file like {\"overall\": 83.2}. Overall coverage must not fall below it. Empty disables the ratchet."
     default: ""
@@ -64,6 +67,7 @@ runs:
       env:
         REPORT: ${{ inputs.report-path }}
         MIN_COVERAGE: ${{ inputs.min-coverage }}
+        COVERAGE_METRIC: ${{ inputs.coverage-metric }}
         BASELINE: ${{ inputs.baseline-path }}
         BASELINE_MARGIN: ${{ inputs.baseline-margin }}
         MIN_CHANGED_COVERAGE: ${{ inputs.min-changed-coverage }}
@@ -76,7 +80,7 @@ runs:
         # cannot publish an earlier module's summary as its own.
         rm -f "$RUNNER_TEMP/coverage-summary.md"
 
-        args=("$REPORT" --min-coverage "$MIN_COVERAGE" --summary-file "$RUNNER_TEMP/coverage-summary.md")
+        args=("$REPORT" --min-coverage "$MIN_COVERAGE" --summary-file "$RUNNER_TEMP/coverage-summary.md" --metric "$COVERAGE_METRIC")
         if [ -n "$BASELINE" ]; then
           args+=(--baseline "$BASELINE")
           if [ -n "$BASELINE_MARGIN" ]; then

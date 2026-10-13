@@ -23,6 +23,12 @@ on:
         description: "Minimum overall line coverage percentage"
         type: string
         default: "80"
+      coverage-metric:
+        description: >
+          Metric behind min-coverage, the ratchet, and the baseline margin:
+          line or instruction. The changed lines check is always line based.
+        type: string
+        default: "line"
       baseline-path:
         description: "JSON file like {\"overall\": 83.2}, relative to project-dir. Overall coverage must not fall below it. Empty disables the ratchet."
         type: string
@@ -114,6 +120,7 @@ jobs:
           report-path: target/site/jacoco/jacoco.xml
           working-directory: ${{ inputs.module && format('{0}/{1}', inputs.project-dir, inputs.module) || inputs.project-dir }}
           min-coverage: ${{ inputs.min-coverage }}
+          coverage-metric: ${{ inputs.coverage-metric }}
           baseline-path: ${{ inputs.baseline-path }}
           baseline-margin: ${{ inputs.baseline-margin }}
           min-changed-coverage: ${{ inputs.min-changed-coverage }}

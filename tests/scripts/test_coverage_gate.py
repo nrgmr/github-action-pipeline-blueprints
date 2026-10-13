@@ -6,6 +6,7 @@ import pytest
 
 JACOCO = """<?xml version="1.0"?>
 <report name="x"><package name="p"><counter type="LINE" missed="1" covered="1"/></package>
+<counter type="INSTRUCTION" missed="75" covered="25"/>
 <counter type="LINE" missed="20" covered="80"/><counter type="BRANCH" missed="5" covered="5"/>
 </report>"""
 
@@ -27,6 +28,23 @@ class TestOverallCoverage:
         body = '<report name="x"><counter type="BRANCH" missed="1" covered="1"/></report>'
         with pytest.raises(coverage_gate.GateError):
             coverage_gate.overall_coverage(write(tmp_path, "j.xml", body))
+
+    def test_jacoco_instruction_metric_uses_instruction_counter(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO)
+        assert coverage_gate.overall_coverage(report, "instruction") == 25.0
+
+    def test_jacoco_without_instruction_counter_errors(self, tmp_path):
+        body = '<report name="x"><counter type="LINE" missed="1" covered="1"/></report>'
+        with pytest.raises(coverage_gate.GateError, match="INSTRUCTION"):
+            coverage_gate.overall_coverage(write(tmp_path, "j.xml", body), "instruction")
+
+    def test_instruction_metric_rejects_cobertura(self, tmp_path):
+        with pytest.raises(coverage_gate.GateError, match="only for JaCoCo"):
+            coverage_gate.overall_coverage(write(tmp_path, "c.xml", COBERTURA), "instruction")
+
+    def test_instruction_metric_rejects_lcov(self, tmp_path):
+        with pytest.raises(coverage_gate.GateError, match="only for JaCoCo"):
+            coverage_gate.overall_coverage(write(tmp_path, "lcov.info", LCOV), "instruction")
 
     def test_cobertura_lines_counts(self, tmp_path):
         assert coverage_gate.overall_coverage(write(tmp_path, "c.xml", COBERTURA)) == 80.0
@@ -340,6 +358,25 @@ class TestMain:
         )
         assert code == 0
         assert "| Overall | 80.00% (min 80%) | ✅ |" in summary.read_text(encoding="utf-8")
+
+    def test_instruction_metric_is_named_in_summary(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO)
+        summary = tmp_path / "summary.md"
+        args = [str(report), "--min-coverage", "20", "--metric", "instruction"]
+        assert coverage_gate.main([*args, "--summary-file", str(summary)]) == 0
+        text = summary.read_text(encoding="utf-8")
+        assert "| Overall (instructions) | 25.00% (min 20%) | ✅ |" in text
+
+    def test_instruction_metric_fails_where_line_passes(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO)
+        assert coverage_gate.main([str(report), "--min-coverage", "50"]) == 0
+        args = [str(report), "--min-coverage", "50", "--metric", "instruction"]
+        assert coverage_gate.main(args) == 2
+
+    def test_instruction_metric_on_non_jacoco_exits_one(self, tmp_path):
+        report = write(tmp_path, "lcov.info", LCOV)
+        args = [str(report), "--min-coverage", "50", "--metric", "instruction"]
+        assert coverage_gate.main(args) == 1
 
     def test_violation_exits_two(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO)

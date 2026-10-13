@@ -37,7 +37,9 @@
   in each. Shared behavior is the coverage inputs and their descriptions, the
   `env-vars` input and `SECRET_ENV_VARS` secret with the `export-env-vars` and `clear-env-vars` steps, the tooling
   checkout, and the `coverage-gate` call. Only the toolchain steps
-  (setup, build, test command, report path) differ by language. Update the
+  (setup, build, test command, report path) differ by language. The one input
+  that does is `coverage-metric` in `java-test.yml`, because instruction
+  coverage exists only in JaCoCo reports. Update the
   shared inputs table in `docs/tools.md` once.
 - Changing any `gen-spec/{language}/` script: the script is called from the
   corresponding language workflow and must write a valid OpenAPI JSON spec to
