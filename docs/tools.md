@@ -821,6 +821,7 @@ The checks behind the test workflows, for a JaCoCo, Cobertura, or LCOV report pr
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
+| `title` | No | working directory | Names the report in the summary and comment heading as `Coverage: <title>`. The test workflows leave it unset, so each module of a multi-module build is told apart by its directory. The repository root adds nothing. |
 | `github-token` | No | `github.token` | Token used to fetch the base commit for the changed lines check and to post the pull request comment |
 
 ### export-env-vars

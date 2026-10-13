@@ -32,7 +32,7 @@ Usage:
     python3 coverage_gate.py <report> --min-coverage 80 \\
         [--baseline coverage-baseline.json] [--baseline-margin 1] \\
         [--diff changes.diff --min-changed-coverage 80] [--summary-file summary.md] \\
-        [--metric line|instruction] [--warn-only]
+        [--metric line|instruction] [--title NAME] [--warn-only]
 """
 
 import argparse
@@ -268,8 +268,10 @@ def render_summary(
     rows: list[tuple[str, str, bool]],
     files: dict[str, tuple[int, int]] | None = None,
     min_changed: float | None = None,
+    title: str = "",
 ) -> str:
-    lines = ["### Coverage", "", "| Check | Result | Status |", "| --- | --- | --- |"]
+    heading = f"### Coverage: {title}" if title else "### Coverage"
+    lines = [heading, "", "| Check | Result | Status |", "| --- | --- | --- |"]
     lines += [
         f"| {name} | {detail} | {PASS_MARK if ok else FAIL_MARK} |" for name, detail, ok in rows
     ]
@@ -300,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diff", type=Path)
     parser.add_argument("--min-changed-coverage", type=float)
     parser.add_argument("--summary-file", type=Path)
+    parser.add_argument("--title", default="", help="Names the report in the summary heading")
     parser.add_argument("--metric", choices=("line", "instruction"), default="line")
     parser.add_argument("--warn-only", action="store_true")
     args = parser.parse_args(argv)
@@ -332,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     elif changed is not None:
         changed_files = changed[1]
         rows.append(evaluate_changed(changed[0], changed_files, args.min_changed_coverage))
-    summary = render_summary(rows, changed_files, args.min_changed_coverage)
+    summary = render_summary(rows, changed_files, args.min_changed_coverage, args.title)
     # The marks are not encodable in a legacy Windows console codepage.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

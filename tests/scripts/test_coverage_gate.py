@@ -348,6 +348,13 @@ class TestRenderSummary:
     def test_omits_file_table_without_changed_files(self):
         assert "| File |" not in coverage_gate.render_summary(self.ROWS)
 
+    def test_title_names_the_report_in_the_heading(self):
+        summary = coverage_gate.render_summary(self.ROWS, title="api/service")
+        assert summary.startswith("### Coverage: api/service\n")
+
+    def test_heading_is_plain_without_a_title(self):
+        assert coverage_gate.render_summary(self.ROWS).startswith("### Coverage\n")
+
 
 class TestMain:
     def test_pass_writes_summary(self, tmp_path):
@@ -358,6 +365,13 @@ class TestMain:
         )
         assert code == 0
         assert "| Overall | 80.00% (min 80%) | ✅ |" in summary.read_text(encoding="utf-8")
+
+    def test_title_option_reaches_the_summary(self, tmp_path):
+        report = write(tmp_path, "j.xml", JACOCO)
+        summary = tmp_path / "summary.md"
+        args = [str(report), "--min-coverage", "20", "--title", "api/web"]
+        assert coverage_gate.main([*args, "--summary-file", str(summary)]) == 0
+        assert summary.read_text(encoding="utf-8").startswith("### Coverage: api/web\n")
 
     def test_instruction_metric_is_named_in_summary(self, tmp_path):
         report = write(tmp_path, "j.xml", JACOCO)
