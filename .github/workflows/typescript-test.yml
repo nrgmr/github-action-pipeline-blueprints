@@ -1,0 +1,115 @@
+name: TypeScript test
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: "Directory containing the pnpm project (package.json and pnpm-lock.yaml)"
+        type: string
+        default: "."
+      node-version:
+        description: "Node.js version"
+        type: string
+        default: "20"
+      typecheck-command:
+        description: "Type-check command, run from project-dir"
+        type: string
+        default: "pnpm exec tsc --noEmit"
+      test-command:
+        description: "Test command, run from project-dir. Must write an LCOV report to coverage/lcov.info."
+        type: string
+        default: "pnpm test --coverage --coverage.reporter=lcov"
+      min-coverage:
+        description: "Minimum overall line coverage percentage"
+        type: string
+        default: "80"
+      baseline-path:
+        description: "JSON file like {\"overall\": 83.2}, relative to project-dir. Overall coverage must not fall below it. Empty disables the ratchet."
+        type: string
+        default: ""
+      baseline-margin:
+        description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
+        type: string
+        default: "1"
+      min-changed-coverage:
+        description: "Minimum combined line coverage percentage of the files a pull request changes. Runs only on pull_request events and ignores changed files the report does not cover. Empty disables."
+        type: string
+        default: ""
+      fail-on-threshold:
+        description: "Fail the job on a coverage violation. When false the violation is reported as a warning."
+        type: boolean
+        default: true
+      comment-on-pr:
+        description: "Post the coverage result as a pull request comment. The caller must grant pull-requests: write."
+        type: boolean
+        default: false
+      env-vars:
+        description: 'JSON object of plain environment variables for the build and test steps, such as {"FOO":"bar"}. Values must be strings.'
+        type: string
+        default: ""
+    secrets:
+      SECRET_ENV_VARS:
+        description: >
+          JSON object of secret environment variables for the build and test
+          steps, such as {"NODE_AUTH_TOKEN":"..."}. Values are masked in logs.
+          Optional.
+        required: false
+
+jobs:
+  test:
+    name: pnpm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .rp-ci-tooling
+          sparse-checkout: |
+            .github/actions/clear-env-vars
+            .github/actions/coverage-gate
+            .github/actions/export-env-vars
+            scripts/coverage_gate.py
+            scripts/export_env_vars.py
+          sparse-checkout-cone-mode: false
+      # pnpm version comes from the packageManager field in package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ inputs.project-dir }}/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.project-dir }}/pnpm-lock.yaml
+      - name: Export caller environment variables
+        uses: ./.rp-ci-tooling/.github/actions/export-env-vars
+        with:
+          env-vars: ${{ inputs.env-vars }}
+          secret-env-vars: ${{ secrets.SECRET_ENV_VARS }}
+      - name: Install dependencies
+        working-directory: ${{ inputs.project-dir }}
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          COMMAND: ${{ inputs.typecheck-command }}
+        run: bash -c "$COMMAND"
+      - name: Test
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          COMMAND: ${{ inputs.test-command }}
+        run: bash -c "$COMMAND"
+      - name: Clear caller environment variables
+        if: always()
+        uses: ./.rp-ci-tooling/.github/actions/clear-env-vars
+      - uses: ./.rp-ci-tooling/.github/actions/coverage-gate
+        with:
+          report-path: coverage/lcov.info
+          working-directory: ${{ inputs.project-dir }}
+          min-coverage: ${{ inputs.min-coverage }}
+          baseline-path: ${{ inputs.baseline-path }}
+          baseline-margin: ${{ inputs.baseline-margin }}
+          min-changed-coverage: ${{ inputs.min-changed-coverage }}
+          fail-on-threshold: ${{ inputs.fail-on-threshold }}
+          comment-on-pr: ${{ inputs.comment-on-pr }}

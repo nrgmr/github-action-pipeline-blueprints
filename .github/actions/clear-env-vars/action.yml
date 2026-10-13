@@ -1,0 +1,12 @@
+name: Clear Env Vars
+description: >
+  Blank the variables that export-env-vars exported, so later steps, including
+  third-party actions, no longer see them. Call it right after the last step that
+  needs them, with `if: always()` so a failed build still clears them.
+
+runs:
+  using: composite
+  steps:
+    - name: Clear exported environment variables
+      shell: bash
+      run: python3 "${{ github.action_path }}/../../../scripts/export_env_vars.py" --clear

@@ -15,18 +15,24 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 - [Branch promotion model](#branch-promotion-model)
 - [Combined service workflow](#combined-service-workflow)
 - [Composite actions](#composite-actions)
+- [Coverage gate](#coverage-gate)
 - [docker-build-push.yml](#docker-build-pushyml)
+- [Environment variables](#environment-variables)
 - [image-scan.yml](#image-scanyml)
-- [python-lint-test.yml](#python-lint-testyml)
+- [java-test.yml](#java-testyml)
+- [python-lint-test.yml (deprecated)](#python-lint-testyml-deprecated)
+- [python-lint.yml](#python-lintyml)
 - [python-openapi-generate.yml](#python-openapi-generateyml)
+- [python-test.yml](#python-testyml)
 - [release-promotion.yml](#release-promotionyml)
 - [secret-scan.yml](#secret-scanyml)
+- [typescript-test.yml](#typescript-testyml)
 
 ---
 
-## python-lint-test.yml
+## python-lint.yml
 
-Runs ruff lint and format checks plus pytest against a Python service using uv.
+Runs ruff lint and format checks against a Python service using uv.
 
 ### Inputs
 
@@ -45,10 +51,225 @@ on:
   pull_request:
 
 jobs:
-  lint-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1.2.0
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
     with:
       project-dir: sidecar
+```
+
+---
+
+## python-test.yml
+
+Runs pytest with coverage against a Python service using uv, then applies the [coverage gate](#coverage-gate). `pytest-cov` is added by the workflow, so the service does not need to depend on it. Coverage scope follows the service's `[tool.coverage.run]` settings.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pyproject.toml` |
+
+The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # only needed with comment-on-pr
+
+jobs:
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    with:
+      project-dir: sidecar
+      min-coverage: "85"
+      comment-on-pr: true
+```
+
+---
+
+## java-test.yml
+
+Runs a Maven build and test with JaCoCo coverage, then applies the [coverage gate](#coverage-gate). The service needs no JaCoCo configuration in its `pom.xml`. It uses `./mvnw` when it is executable and `mvn` otherwise, so commit the wrapper with its executable bit set (`git update-index --chmod=+x mvnw`). JaCoCo is pinned to 0.8.12, which supports JDKs up to 22.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pom.xml` |
+| `module` | No | `""` | Maven module to build and test, relative to `project-dir`. Empty builds `project-dir` itself. See [Multi-module builds](#multi-module-builds). |
+| `java-version` | No | `17` | Temurin JDK version |
+
+The workflow reads the report from `target/site/jacoco/jacoco.xml`, so the project must use the standard Maven layout. If the module's surefire configuration sets `<argLine>`, include `@{argLine}` in it, or the JaCoCo agent is dropped and the report shows no coverage. The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+jobs:
+  api-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    with:
+      project-dir: api
+```
+
+### Multi-module builds
+
+A parent `pom.xml` with `<packaging>pom</packaging>` produces no coverage report of its own, because JaCoCo writes one per module. Set `module` to the module to test, once per module, usually with a matrix. The workflow runs `mvn -pl <module> -am`, so the modules it depends on are built too, and reads the report from `<project-dir>/<module>/target/site/jacoco/jacoco.xml`. `baseline-path` is relative to the module directory, and the coverage artifact is named after it, such as `coverage-api-service-jacoco.xml`.
+
+```yaml
+jobs:
+  api-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: service
+            min-coverage: "63"
+          - module: web
+            min-coverage: "60"
+    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    with:
+      project-dir: api
+      module: ${{ matrix.module }}
+      min-coverage: ${{ matrix.min-coverage }}
+```
+
+- Modules it depends on run their tests again, so each call pays for them. A module with many upstream dependencies costs more CI time.
+- Coverage is measured per module. There is no combined figure across modules.
+- `module` is a path relative to `project-dir`, not an artifact ID, so `-pl` resolves it from the reactor root.
+
+---
+
+## typescript-test.yml
+
+Runs a pnpm install, a type check, and tests with LCOV coverage, then applies the [coverage gate](#coverage-gate). The pnpm version comes from the `packageManager` field in `package.json`. Type errors and test failures always fail the job, regardless of `fail-on-threshold`.
+
+The default `test-command` uses Vitest flags and needs `@vitest/coverage-v8` or `@vitest/coverage-istanbul` installed. For Jest, set `test-command` to `pnpm test --coverage --coverageReporters=lcov`.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing `package.json` and `pnpm-lock.yaml` |
+| `node-version` | No | `20` | Node.js version |
+| `typecheck-command` | No | `pnpm exec tsc --noEmit` | Type-check command, run from `project-dir` |
+| `test-command` | No | `pnpm test --coverage --coverage.reporter=lcov` | Test command, run from `project-dir`. Must write an LCOV report to `coverage/lcov.info`. |
+
+The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+jobs:
+  ui-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/typescript-test.yml@v1.2.0
+    with:
+      project-dir: ui
+```
+
+---
+
+## Coverage gate
+
+`python-test.yml`, `java-test.yml`, and `typescript-test.yml` finish by running the same gate against the coverage report they produce. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed files check is off until `min-changed-coverage` is set:
+
+- **Overall:** total line coverage must be at least `min-coverage`.
+- **Ratchet:** overall coverage must not fall below the value in `baseline-path`, a JSON file such as `{"overall": 83.2}` committed in the service repo. The comparison rounds both the measured coverage and the baseline to two decimals. The overall minimum is compared unrounded, so 79.996% fails an 80% minimum even though it displays as 80.00%. A missing file skips the check and logs a notice, so a team can adopt the ratchet by committing the first baseline. Check the notice if the ratchet never fails, since a mistyped path looks the same. An empty or unrecognised report is an error, not a pass.
+- **Baseline margin:** overall coverage must not exceed the baseline by more than `baseline-margin` percentage points, `1` by default. The baseline file is edited by hand, so without this check it falls behind as coverage improves and the ratchet protects less over time. A pull request that adds tests past the margin fails until it also raises `overall` in the baseline file, and the failure message gives the value to write. Set `baseline-margin` to `"0"` to require an exact match, or to an empty string to turn the check off. Like the others, it only warns when `fail-on-threshold` is `false`.
+- **Changed files:** the files a pull request changes must reach `min-changed-coverage` combined, so new code is held to a standard even when the overall figure is high enough to absorb it. The figure is covered lines over total lines across those files, not an average of per-file percentages, so a large well-covered file offsets a small uncovered one. Changed files the report does not cover, such as tests, docs, and workflow files, are ignored, and the check is skipped with a notice when none appear in the report. It runs only on `pull_request` events, comparing the merge commit with the base branch, and is skipped with a notice on other events. The job summary lists the five least covered changed files so a failure points at where to add tests. Only files under the project directory (`project-dir`, plus `module` for Java) are considered. Report paths are matched to them by trailing path segments, so a source root that differs from the project root needs no configuration.
+
+A reviewer should question any pull request that lowers a baseline file, because it quietly weakens the ratchet. Two open pull requests that both raise the same baseline conflict on that file, so the second resolves it after the first merges. Measure the first baseline on the CI runner, not locally, since results can differ by a few hundredths between platforms.
+
+Results appear in the job summary whenever the report is readable. The coverage report is uploaded for 7 days as an artifact named `coverage-<project-dir>[-<module>]-<report file>`, such as `coverage-api-jacoco.xml`, so one call per module does not collide. Nothing is uploaded when the tests fail.
+
+### Coverage gate inputs
+
+These inputs are shared by all three test workflows.
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `min-coverage` | No | `80` | Minimum overall line coverage percentage |
+| `baseline-path` | No | `""` | Ratchet baseline file, relative to `project-dir`. Empty disables the ratchet and the baseline margin. |
+| `baseline-margin` | No | `1` | Maximum percentage points coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables it. |
+| `min-changed-coverage` | No | `""` | Minimum combined line coverage percentage of the files a pull request changes. Runs only on `pull_request` events and ignores changed files the report does not cover. Empty disables it. |
+| `fail-on-threshold` | No | `true` | When `false`, a violation is reported as a warning and the job passes. Use it as a temporary on-ramp, not a permanent setting. |
+| `comment-on-pr` | No | `false` | Post the result as a pull request comment, updated in place on each run, with one comment per report so calls for different modules do not overwrite each other. The calling workflow must grant `pull-requests: write`. Fork PRs cannot comment, and the comment step never fails the job. |
+
+---
+
+## Environment variables
+
+`python-test.yml`, `java-test.yml`, and `typescript-test.yml` can export environment variables to their build and test steps. Use it for what a private dependency needs, such as `NODE_AUTH_TOKEN` for the `@nrgmr` scope on GitHub Packages, Maven repository credentials read by `settings.xml`, or `UV_INDEX_*_PASSWORD` for a private Python index. The workflows do not know any variable names, so a new need never requires a change here.
+
+| Option | Kind | Default | Description |
+| --- | --- | --- | --- |
+| `env-vars` | Input | `""` | JSON object of plain variables, such as `{"FOO":"bar"}`. Values are not masked. |
+| `SECRET_ENV_VARS` | Secret | unset | JSON object of secret variables, such as `{"NODE_AUTH_TOKEN":"..."}`. Every value is masked in logs. |
+
+Both are optional. A reusable workflow cannot take an arbitrary set of named secrets, so one JSON secret carries them all.
+
+```yaml
+jobs:
+  ui-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/typescript-test.yml@v1.2.0
+    permissions:
+      contents: read
+      packages: read # lets GITHUB_TOKEN read @nrgmr packages
+    with:
+      project-dir: ui
+      env-vars: '{"CI_REGION":"us-west1"}'
+    secrets:
+      # toJSON quotes and escapes the value, so a quote or newline in it cannot break the JSON.
+      SECRET_ENV_VARS: '{"NODE_AUTH_TOKEN":${{ toJSON(secrets.GITHUB_TOKEN) }}}'
+```
+
+The variables are exported by the [export-env-vars](#export-env-vars) action, which each workflow runs after toolchain setup and just before the install, build, or test step. The [clear-env-vars](#clear-env-vars) action then blanks them right after the last of those steps, even when the build fails, so the coverage gate and anything that runs after it never see the values.
+
+### Limits
+
+- **Strings only.** Every value must be a JSON string, so write `"8080"`, not `8080`. Malformed JSON, a non-string value, or an invalid name fails the job before any step runs.
+- **Reserved names.** Names must match `[A-Za-z_][A-Za-z0-9_]*`. `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `HOME`, `SHELL`, `CI`, `BASH_ENV`, `ENV`, `LD_PRELOAD`, and `LD_LIBRARY_PATH` are rejected, so a caller cannot change how the runner or the shared steps behave. `NODE_OPTIONS` is also rejected, because the runner does not allow it in `GITHUB_ENV`. Set it in an `env:` block on the step that needs it instead.
+- **Visibility.** A variable is visible only to the steps between the export and the clear step, which are the install, build, and test steps. That includes the scripts, plugins, and dependencies those commands run, which cannot be avoided if they need the credential. Earlier steps, such as toolchain setup and the tooling checkout, never see it, so a variable needed by setup itself, such as a registry configured through `setup-node`, cannot be supplied this way. Later steps see an empty value. Do not add a third-party action between the export and the clear step.
+- **Test job only.** Other workflows, such as `python-openapi-generate.yml`, `docker-build-push.yml`, and `image-scan.yml`, do not accept these options.
+- **Masking is by exact value.** A multi-line value is masked line by line. A derived form of a secret, such as its base64 encoding, is not masked. A very short or common value masks every occurrence of it in the logs.
+- **Duplicates.** A name in both `env-vars` and `SECRET_ENV_VARS` takes the secret value.
+- **No fork or Dependabot secrets.** Secrets are not passed to pull requests from forks or to Dependabot, and `GITHUB_TOKEN` is read-only there, so a private install fails on those runs. This is expected.
+- **`GITHUB_TOKEN` and GitHub Packages.** The caller must grant `packages: read`, and the package must allow this repository access under its package settings. Otherwise the install fails with a 403 even though the variable is set.
+- **Size.** A GitHub secret is limited to 48 KB, which bounds `SECRET_ENV_VARS` as a whole.
+- **Caller escapes the JSON.** The workflow cannot fix JSON the caller built badly. Use `toJSON()` for secret values, as in the example above.
+
+---
+
+## python-lint-test.yml (deprecated)
+
+Deprecated: use [`python-lint.yml`](#python-lintyml) and [`python-test.yml`](#python-testyml) instead. This workflow remains for one major version and is then removed. Callers pinned to an existing tag are unaffected until they upgrade.
+
+It runs the original lint and test jobs, without coverage, and adds a deprecation warning to each run.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pyproject.toml` |
+
+### Migration
+
+```yaml
+jobs:
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    with:
+      fail-on-threshold: false # while adopting coverage; remove once passing
 ```
 
 ---
@@ -214,7 +435,7 @@ jobs:
 
 ## secret-scan.yml
 
-Scans for secrets with [gitleaks](https://github.com/gitleaks/gitleaks). Language-agnostic: every service can call this the same way regardless of what `python-lint-test.yml` / `docker-build-push.yml` variant it also uses.
+Scans for secrets with [gitleaks](https://github.com/gitleaks/gitleaks). Language-agnostic: every service can call this the same way regardless of what `python-lint.yml` / `docker-build-push.yml` variant it also uses.
 
 ### Inputs
 
@@ -533,13 +754,18 @@ on:
         default: false
 
 jobs:
-  lint-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1.2.0
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    with:
+      project-dir: sidecar
+
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
     with:
       project-dir: sidecar
 
   api-checks:
-    needs: lint-test
+    needs: [lint, test]
     uses: nrgmr/rp-ci-tooling/.github/workflows/python-openapi-generate.yml@v1.2.0
     with:
       project-dir: sidecar
@@ -553,7 +779,7 @@ jobs:
     secrets: inherit
 
   docker:
-    needs: [lint-test, api-checks]
+    needs: [lint, test, api-checks]
     uses: nrgmr/rp-ci-tooling/.github/workflows/docker-build-push.yml@v1.2.0
     with:
       image-name: my-service-sidecar
@@ -577,6 +803,34 @@ The checks behind `python-openapi-generate.yml`, for a spec generated by any lan
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `teams-webhook-url` | No | `""` | Teams incoming webhook URL for the route major version bump notice. Empty skips the notice. |
+
+### clear-env-vars
+
+The step that ends the exposure started by [export-env-vars](#export-env-vars). It takes no inputs and sets every exported variable to an empty value for the remaining steps. Run it with `if: always()` after the last step that needs them, so a failed build still clears them. It does nothing when nothing was exported.
+
+```yaml
+- name: Clear caller environment variables
+  if: always()
+  uses: nrgmr/rp-ci-tooling/.github/actions/clear-env-vars@v1.2.0
+```
+
+### coverage-gate
+
+The checks behind the test workflows, for a JaCoCo, Cobertura, or LCOV report produced by any language. Inputs: `report-path` (required), `working-directory`, `min-coverage`, `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr`, which behave as described under [Coverage gate](#coverage-gate), plus:
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `github-token` | No | `github.token` | Token used to post the pull request comment |
+
+### export-env-vars
+
+The step behind [Environment variables](#environment-variables). Inputs `env-vars` and `secret-env-vars` take the same JSON objects as the workflow options above, and the same limits apply. Secret values are masked before anything is written.
+
+```yaml
+- uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
+  with:
+    secret-env-vars: '{"NODE_AUTH_TOKEN":${{ toJSON(secrets.REGISTRY_TOKEN) }}}'
+```
 
 ### notify-teams
 
