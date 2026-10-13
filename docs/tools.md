@@ -820,7 +820,7 @@ The checks behind the test workflows, for a JaCoCo, Cobertura, or LCOV report pr
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `github-token` | No | `github.token` | Token used to post the pull request comment |
+| `github-token` | No | `github.token` | Token used to fetch the base commit for the changed files check and to post the pull request comment |
 
 ### export-env-vars
 

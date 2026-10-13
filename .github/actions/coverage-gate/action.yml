@@ -30,7 +30,7 @@ inputs:
     description: "Post the result as a pull request comment. The calling job needs pull-requests: write."
     default: "false"
   github-token:
-    description: "Token used to post the pull request comment"
+    description: "Token used to fetch the base commit for the changed files check and to post the pull request comment"
     default: ${{ github.token }}
 
 runs:
@@ -70,6 +70,7 @@ runs:
         FAIL_ON_THRESHOLD: ${{ inputs.fail-on-threshold }}
         EVENT_NAME: ${{ github.event_name }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         # RUNNER_TEMP is shared by every call in the job. Clear it so a failed run
         # cannot publish an earlier module's summary as its own.
@@ -89,7 +90,12 @@ runs:
             # commit, so the diff is what the pull request would add. --relative keeps
             # only files under working-directory, so another project's file with the
             # same name cannot match this project's report.
-            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            # Callers check out with persist-credentials: false, so authenticate this one
+            # fetch with the token instead of leaving it in .git/config for every step.
+            auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
+            echo "::add-mask::$auth"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              fetch --no-tags --depth=1 origin "$BASE_SHA"
             changed_files="$RUNNER_TEMP/changed-files.txt"
             git diff --name-only --relative --diff-filter=d "$BASE_SHA" HEAD > "$changed_files"
             args+=(--changed-files "$changed_files" --min-changed-coverage "$MIN_CHANGED_COVERAGE")
