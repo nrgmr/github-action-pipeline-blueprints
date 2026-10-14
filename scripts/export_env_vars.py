@@ -8,14 +8,15 @@ and appends each pair to the file named by GITHUB_ENV. A name in both objects ta
 the secret value. An empty or unset object is skipped.
 
 Names must be valid shell identifiers and must not start with GITHUB_, RUNNER_ or
-ACTIONS_, nor be one of PROTECTED_NAMES, so a caller cannot change how the runner or
-the shared steps behave. NODE_OPTIONS is also rejected, because the runner does not
+ACTIONS_, nor be NAMES_VAR or one of PROTECTED_NAMES, so a caller cannot change how the
+runner or the shared steps behave. NODE_OPTIONS is also rejected, because the runner does not
 allow it in GITHUB_ENV. Values are written with a random delimiter, so a newline in a
 value cannot add variables.
 
-The exported names are also recorded in NAMES_VAR. With --clear, each recorded name is
-set to an empty value, so the steps after the build and test steps, including the
-coverage gate and any third-party action, no longer see the values.
+The exported names are also recorded in NAMES_VAR, added to any names recorded by an
+earlier export in the same job, so one clear step covers every export. With --clear,
+each recorded name is set to an empty value, so the steps after the build and test
+steps, including the coverage gate and any third-party action, no longer see the values.
 
 Exit codes:
     0  - variables exported or cleared, or nothing to do
@@ -69,7 +70,7 @@ def parse_object(raw: str, source: str) -> dict[str, str]:
 def check_name(name: str, source: str) -> None:
     if not NAME_PATTERN.fullmatch(name):
         raise ExportError(f"{source}: {name!r} is not a valid variable name.")
-    if name in PROTECTED_NAMES or name.startswith(PROTECTED_PREFIXES):
+    if name == NAMES_VAR or name in PROTECTED_NAMES or name.startswith(PROTECTED_PREFIXES):
         raise ExportError(f"{source}: {name} is reserved and cannot be set.")
     # The runner refuses this name in GITHUB_ENV, case-insensitively. Failing here gives a
     # clear message instead of a runner error after the step has started.
@@ -95,12 +96,16 @@ def export(variables: dict[str, str], env_file: Path) -> None:
             handle.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
 
 
+def recorded_names() -> list[str]:
+    return [name for name in os.environ.get(NAMES_VAR, "").split(",") if name]
+
+
 def run_clear() -> int:
     try:
         env_file = os.environ.get("GITHUB_ENV")
         if not env_file:
             raise ExportError("GITHUB_ENV is not set; this must run inside a GitHub Actions step.")
-        names = [name for name in os.environ.get(NAMES_VAR, "").split(",") if name]
+        names = recorded_names()
         # The list lives in GITHUB_ENV, which a build step can edit, so each name is checked
         # again. That keeps this step from writing to a protected name.
         for name in names:
@@ -128,6 +133,11 @@ def main() -> int:
         for source, variables in (("env-vars", plain), ("secret-env-vars", secret)):
             for name in variables:
                 check_name(name, source)
+        # The list lives in GITHUB_ENV, which a build step can edit, so names from an earlier
+        # export are checked again before they are carried forward.
+        earlier = recorded_names()
+        for name in earlier:
+            check_name(name, NAMES_VAR)
     except ExportError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -137,7 +147,8 @@ def main() -> int:
         mask(value)
     merged = {**plain, **secret}
     if merged:
-        export({**merged, NAMES_VAR: ",".join(merged)}, Path(env_file))
+        names = list(dict.fromkeys([*earlier, *merged]))
+        export({**merged, NAMES_VAR: ",".join(names)}, Path(env_file))
         print(f"Exported {len(merged)} variable(s): {', '.join(sorted(merged))}")
     return 0
 

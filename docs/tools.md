@@ -58,40 +58,33 @@ These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists t
 
 ## Environment variables
 
-`python-test.yml` can export environment variables to their build and test steps. Use it for what a private dependency needs, such as `UV_INDEX_*_PASSWORD` for a private Python index. The workflows do not know any variable names, so a new need never requires a change here.
+The [export-env-vars](#export-env-vars) and [clear-env-vars](#clear-env-vars) actions pass environment variables, such as registry credentials, to the build and test steps of a job. Use them for what a private dependency needs, such as `UV_INDEX_*_PASSWORD` for a private Python index. The actions do not know any variable names, so a new need never requires a change here.
 
-| Option | Kind | Default | Description |
-| --- | --- | --- | --- |
-| `env-vars` | Input | `""` | JSON object of plain variables, such as `{"FOO":"bar"}`. Values are not masked. |
-| `SECRET_ENV_VARS` | Secret | unset | JSON object of secret variables, such as `{"UV_INDEX_PRIVATE_PASSWORD":"..."}`. Every value is masked in logs. |
-
-Both are optional. A reusable workflow cannot take an arbitrary set of named secrets, so one JSON secret carries them all.
+Run `export-env-vars` right before the first step that needs the variables, and `clear-env-vars` with `if: always()` right after the last one, so the coverage gate and anything that runs after it never see the values. `export-env-vars` can run more than once before the single clear step.
 
 ```yaml
-jobs:
-  service-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+steps:
+  - uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
     with:
-      project-dir: service
       env-vars: '{"CI_REGION":"us-west1"}'
-    secrets:
       # toJSON quotes and escapes the value, so a quote or newline in it cannot break the JSON.
-      SECRET_ENV_VARS: '{"UV_INDEX_PRIVATE_PASSWORD":${{ toJSON(secrets.PRIVATE_INDEX_PASSWORD) }}}'
+      secret-env-vars: '{"UV_INDEX_PRIVATE_PASSWORD":${{ toJSON(secrets.PRIVATE_INDEX_PASSWORD) }}}'
+  - run: uv sync && uv run pytest
+  - name: Clear caller environment variables
+    if: always()
+    uses: nrgmr/rp-ci-tooling/.github/actions/clear-env-vars@v1.2.0
 ```
-
-The variables are exported by the [export-env-vars](#export-env-vars) action, which each workflow runs after toolchain setup and just before the install, build, or test step. The [clear-env-vars](#clear-env-vars) action then blanks them right after the last of those steps, even when the build fails, so the coverage gate and anything that runs after it never see the values.
 
 ### Limits
 
 - **Strings only.** Every value must be a JSON string, so write `"8080"`, not `8080`. Malformed JSON, a non-string value, or an invalid name fails the job before any step runs.
-- **Reserved names.** Names must match `[A-Za-z_][A-Za-z0-9_]*`. `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `HOME`, `SHELL`, `CI`, `BASH_ENV`, `ENV`, `LD_PRELOAD`, and `LD_LIBRARY_PATH` are rejected, so a caller cannot change how the runner or the shared steps behave. `NODE_OPTIONS` is also rejected, because the runner does not allow it in `GITHUB_ENV`. Set it in an `env:` block on the step that needs it instead.
-- **Visibility.** A variable is visible only to the steps between the export and the clear step, which are the install, build, and test steps. That includes the scripts, plugins, and dependencies those commands run, which cannot be avoided if they need the credential. Earlier steps, such as toolchain setup and the tooling checkout, never see it, so a variable needed by setup itself, such as a registry configured through a setup action, cannot be supplied this way. Later steps see an empty value. Do not add a third-party action between the export and the clear step.
-- **Test job only.** Other workflows, such as `python-openapi-generate.yml`, `docker-build-push.yml`, and `image-scan.yml`, do not accept these options.
+- **Reserved names.** Names must match `[A-Za-z_][A-Za-z0-9_]*`. `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `HOME`, `SHELL`, `CI`, `BASH_ENV`, `ENV`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, and `RP_EXPORTED_ENV_NAMES`, which the actions use to track what to clear, are rejected, so a caller cannot change how the runner or the shared steps behave. `NODE_OPTIONS` is also rejected, because the runner does not allow it in `GITHUB_ENV`. Set it in an `env:` block on the step that needs it instead.
+- **Visibility.** A variable is visible only to the steps between the export and the clear step. That includes the scripts, plugins, and dependencies those commands run, which cannot be avoided if they need the credential. Earlier steps never see it, so a variable needed by an earlier step cannot be supplied this way. Later steps see an empty value. Do not add a third-party action between the export and the clear step.
 - **Masking is by exact value.** A multi-line value is masked line by line. A derived form of a secret, such as its base64 encoding, is not masked. A very short or common value masks every occurrence of it in the logs.
-- **Duplicates.** A name in both `env-vars` and `SECRET_ENV_VARS` takes the secret value.
+- **Duplicates.** A name in both `env-vars` and `secret-env-vars` takes the secret value.
 - **No fork or Dependabot secrets.** Secrets are not passed to pull requests from forks or to Dependabot, and `GITHUB_TOKEN` is read-only there, so a private install fails on those runs. This is expected.
-- **Size.** A GitHub secret is limited to 48 KB, which bounds `SECRET_ENV_VARS` as a whole.
-- **Caller escapes the JSON.** The workflow cannot fix JSON the caller built badly. Use `toJSON()` for secret values, as in the example above.
+- **Size.** A GitHub secret is limited to 48 KB, which bounds `secret-env-vars` as a whole.
+- **Caller escapes the JSON.** The action cannot fix JSON the caller built badly. Use `toJSON()` for secret values, as in the example above.
 
 ---
 
@@ -682,7 +675,7 @@ Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any lang
 
 ### export-env-vars
 
-The step behind [Environment variables](#environment-variables). Inputs `env-vars` and `secret-env-vars` take the same JSON objects as the workflow options above, and the same limits apply. Secret values are masked before anything is written.
+The step behind [Environment variables](#environment-variables). Inputs `env-vars` and `secret-env-vars` each take a JSON object of string values, with an empty value skipping it, and the limits above apply. A later call adds to the names an earlier call recorded, so one `clear-env-vars` step blanks every batch. Secret values are masked before anything is written.
 
 ```yaml
 - uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
