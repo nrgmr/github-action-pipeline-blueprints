@@ -35,6 +35,13 @@
   build or test step and before any third-party action, and never add one
   in between. The limits in the
   Environment variables section of `docs/tools.md` must stay accurate.
+- Changing a `{language}-test.yml` workflow: the shared behavior must stay
+  identical across all of them, so make the same change in each. Shared
+  behavior is the coverage inputs and their descriptions, the `env-vars`
+  input and `SECRET_ENV_VARS` secret with the `export-env-vars` and
+  `clear-env-vars` steps, the tooling checkout, and the `coverage-gate` call.
+  Only the toolchain steps (setup, build, test command, report path) differ by
+  language. Update the shared inputs table in `docs/tools.md` once.
 - Changing any `gen-spec/{language}/` script: the script is called from the
   corresponding language workflow and must write a valid OpenAPI JSON spec to
   stdout.
@@ -68,6 +75,15 @@ would drift from the workflow version the caller pinned.
     ref: ${{ job.workflow_sha }}
     path: .rp-ci-tooling
 ```
+
+**Deprecating a workflow:** GitHub Actions has no deprecation marker. Keep the
+workflow's existing jobs unchanged, add a job that emits a `::warning::`
+annotation, mark its `docs/tools.md` section "(deprecated)" with a migration
+example, and remove it only in a later major release. Do not turn it into a
+wrapper that calls its replacements: GitHub does not document which repository a
+relative `uses: ./...` resolves against when a workflow is called from another
+repository, and a hardcoded ref would break the pinning convention. Pinned
+callers keep the old behavior because tags are immutable.
 
 **Coverage in test workflows:** language test workflows produce a coverage
 report and then call `./.rp-ci-tooling/.github/actions/coverage-gate`. Do not

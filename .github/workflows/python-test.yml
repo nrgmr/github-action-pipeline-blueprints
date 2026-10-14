@@ -1,0 +1,100 @@
+name: Python test
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: "Directory containing the uv project (pyproject.toml)"
+        type: string
+        default: "."
+      min-coverage:
+        description: "Minimum overall line coverage percentage"
+        type: string
+        default: "80"
+      baseline-path:
+        description: "JSON file like {\"overall\": 83.2}, relative to project-dir. Overall coverage must not fall below it. Empty disables the ratchet."
+        type: string
+        default: ""
+      baseline-margin:
+        description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
+        type: string
+        default: "1"
+      min-changed-coverage:
+        description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
+        type: string
+        default: ""
+      fail-on-threshold:
+        description: "Fail the job on a coverage violation. When false the violation is reported as a warning."
+        type: boolean
+        default: true
+      comment-on-pr:
+        description: "Post the coverage result as a pull request comment. The caller must grant pull-requests: write."
+        type: boolean
+        default: false
+      env-vars:
+        description: 'JSON object of plain environment variables for the build and test steps, such as {"FOO":"bar"}. Values must be strings.'
+        type: string
+        default: ""
+    secrets:
+      SECRET_ENV_VARS:
+        description: >
+          JSON object of secret environment variables for the build and test
+          steps, such as {"NODE_AUTH_TOKEN":"..."}. Values are masked in logs.
+          Optional.
+        required: false
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .rp-ci-tooling
+          sparse-checkout: |
+            .github/actions/clear-env-vars
+            .github/actions/coverage-gate
+            .github/actions/export-env-vars
+            scripts/coverage_gate.py
+            scripts/export_env_vars.py
+          sparse-checkout-cone-mode: false
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ inputs.project-dir }}/uv.lock
+      - name: Export caller environment variables
+        uses: ./.rp-ci-tooling/.github/actions/export-env-vars
+        with:
+          env-vars: ${{ inputs.env-vars }}
+          secret-env-vars: ${{ secrets.SECRET_ENV_VARS }}
+      - name: Install dev dependencies
+        working-directory: ${{ inputs.project-dir }}
+        run: uv sync --group dev
+      # pytest-cov is added ad hoc so callers do not have to depend on it.
+      # Coverage scope follows the caller's [tool.coverage.run] settings.
+      # --cov-fail-under=0 overrides any fail_under in the caller's config, so the
+      # coverage gate alone decides and fail-on-threshold: false is honoured.
+      - name: pytest
+        working-directory: ${{ inputs.project-dir }}
+        run: >-
+          uv run --with "pytest-cov>=7.1.0" pytest
+          --cov --cov-fail-under=0 --cov-report=xml:coverage.xml
+      - name: Clear caller environment variables
+        if: always()
+        uses: ./.rp-ci-tooling/.github/actions/clear-env-vars
+      - uses: ./.rp-ci-tooling/.github/actions/coverage-gate
+        with:
+          report-path: coverage.xml
+          working-directory: ${{ inputs.project-dir }}
+          min-coverage: ${{ inputs.min-coverage }}
+          baseline-path: ${{ inputs.baseline-path }}
+          baseline-margin: ${{ inputs.baseline-margin }}
+          min-changed-coverage: ${{ inputs.min-changed-coverage }}
+          fail-on-threshold: ${{ inputs.fail-on-threshold }}
+          comment-on-pr: ${{ inputs.comment-on-pr }}

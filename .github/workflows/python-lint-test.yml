@@ -1,4 +1,12 @@
-name: Python lint and test
+name: Python lint and test (deprecated)
+
+# Deprecated: call python-lint.yml and python-test.yml directly. Removed in the
+# next major release.
+#
+# The jobs stay inline instead of calling the replacements. GitHub does not
+# document which repository a relative `uses: ./...` resolves against when the
+# workflow is called from another repository, and a hardcoded ref would break
+# the pinning convention.
 
 on:
   workflow_call:
@@ -9,6 +17,14 @@ on:
         default: "."
 
 jobs:
+  deprecation-notice:
+    name: Deprecation notice
+    runs-on: ubuntu-latest
+    steps:
+      - run: >-
+          echo "::warning title=python-lint-test.yml is deprecated::Replace it with
+          python-lint.yml and python-test.yml. See docs/tools.md in rp-ci-tooling."
+
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest

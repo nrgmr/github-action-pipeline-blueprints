@@ -12,10 +12,10 @@ import pytest
 RULESET = Path(__file__).parent.parent.parent / "spectral" / "rp-base.spectral.js"
 FIXTURES = Path(__file__).parent / "fixtures"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("spectral") is None,
-    reason="spectral not on PATH",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(shutil.which("spectral") is None, reason="spectral not on PATH"),
+]
 
 
 def lint(fixture_name: str) -> tuple[int, str]:
