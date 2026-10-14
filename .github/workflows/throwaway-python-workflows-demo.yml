@@ -1,0 +1,30 @@
+name: Throwaway Python workflows demo
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: python-lint
+    uses: ./.github/workflows/python-lint.yml
+
+  test:
+    name: python-test with every option
+    uses: ./.github/workflows/python-test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      min-coverage: "80"
+      min-changed-coverage: "80"
+      comment-on-pr: true
+      env-vars: '{"DEMO_PLAIN":"plain-value"}'
+    secrets:
+      SECRET_ENV_VARS: '{"DEMO_SECRET":"dummy-not-a-real-secret"}'
+
+  deprecated:
+    name: python-lint-test (deprecated)
+    uses: ./.github/workflows/python-lint-test.yml
