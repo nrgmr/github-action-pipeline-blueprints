@@ -1,13 +1,18 @@
 """Apply coverage thresholds to a JaCoCo, Cobertura, or LCOV report.
 
 Two independent checks:
-    overall  - total line coverage must be >= --min-coverage
-    ratchet  - with --baseline, total line coverage must not fall below the value
+    overall  - total coverage must be >= --min-coverage
+    ratchet  - with --baseline, total coverage must not fall below the value
                recorded there, a JSON file of the form {"overall": 83.2}
 
-A third check keeps the baseline current. With --baseline-margin, total line coverage
+A third check keeps the baseline current. With --baseline-margin, total coverage
 must not exceed the baseline by more than that many percentage points, so a change
 that raises coverage also raises the file. It applies only when a baseline exists.
+
+Total coverage is a line percentage unless --metric instruction is given, which reads the
+JaCoCo INSTRUCTION counter instead. Instructions weight each line by its bytecode, so
+large but lightly tested code such as DTOs and mappers counts for more. The changed lines
+check is always line based.
 
 A fourth check holds new work to a standard regardless of the overall figure. With
 --min-changed-coverage and --diff (the output of `git diff -U0`), the combined line
@@ -32,7 +37,7 @@ Usage:
     python3 coverage_gate.py <report> --min-coverage 80 \\
         [--baseline coverage-baseline.json] [--baseline-margin 1] \\
         [--diff changes.diff --min-changed-coverage 80] [--summary-file summary.md] \\
-        [--warn-only]
+        [--metric line|instruction] [--title NAME] [--warn-only]
 """
 
 import argparse
@@ -66,15 +71,22 @@ def _percent(covered: int, total: int, path: Path) -> float:
     return covered * 100 / total
 
 
-def _overall_xml(path: Path) -> float:
+def _jacoco_only(path: Path, metric: str) -> None:
+    if metric != "line":
+        raise GateError(f"{path}: --metric {metric} is supported only for JaCoCo reports")
+
+
+def _overall_xml(path: Path, metric: str) -> float:
     root = ET.parse(path).getroot()
     if root.tag == "report":
-        # JaCoCo: report-level LINE counter is the sum across all packages.
+        # JaCoCo: the report-level counter is the sum across all packages.
+        counter_type = metric.upper()
         for counter in root.findall("counter"):
-            if counter.get("type") == "LINE":
+            if counter.get("type") == counter_type:
                 covered = int(counter.get("covered", 0))
                 return _percent(covered, covered + int(counter.get("missed", 0)), path)
-        raise GateError(f"{path}: JaCoCo report has no report-level LINE counter")
+        raise GateError(f"{path}: JaCoCo report has no report-level {counter_type} counter")
+    _jacoco_only(path, metric)
     if root.tag == "coverage":
         lines_valid = root.get("lines-valid")
         lines_covered = root.get("lines-covered")
@@ -99,13 +111,14 @@ def _overall_lcov(path: Path) -> float:
     return _percent(hit, found, path)
 
 
-def overall_coverage(path: Path) -> float:
-    """Return total line coverage as a percentage."""
+def overall_coverage(path: Path, metric: str = "line") -> float:
+    """Return total coverage as a percentage, by line or, for JaCoCo, by instruction."""
     if not path.is_file():
         raise GateError(f"coverage report not found: {path}")
     try:
         if path.suffix == ".xml":
-            return _overall_xml(path)
+            return _overall_xml(path, metric)
+        _jacoco_only(path, metric)
         return _overall_lcov(path)
     except (ET.ParseError, ValueError) as exc:
         raise GateError(f"{path}: unreadable coverage report ({exc})") from exc
@@ -359,17 +372,21 @@ def evaluate(
     min_coverage: float,
     baseline: float | None,
     baseline_margin: float | None = None,
+    metric: str = "line",
 ) -> list[tuple[str, str, bool]]:
     """Return (check, detail, passed) rows for every check that applies."""
-    rows = [("Overall", f"{overall:.2f}% (min {min_coverage:g}%)", overall >= min_coverage)]
+    # Name the metric only when it is not the default, so nobody compares an
+    # instruction figure with a line one.
+    unit = "" if metric == "line" else f" ({metric}s)"
+    rows = [(f"Overall{unit}", f"{overall:.2f}% (min {min_coverage:g}%)", overall >= min_coverage)]
     if baseline is not None:
         # Baselines are written from the two-decimal display value, so compare at that precision.
         passed = round(overall, 2) >= round(baseline, 2)
-        rows.append(("Ratchet", f"{overall:.2f}% (baseline {baseline:.2f}%)", passed))
+        rows.append((f"Ratchet{unit}", f"{overall:.2f}% (baseline {baseline:.2f}%)", passed))
         if baseline_margin is not None:
             headroom = round(round(overall, 2) - round(baseline, 2), 2)
             detail = f"{headroom:+.2f} points from baseline (max +{baseline_margin:g})"
-            rows.append(("Baseline", detail, headroom <= baseline_margin))
+            rows.append((f"Baseline{unit}", detail, headroom <= baseline_margin))
     return rows
 
 
@@ -395,8 +412,10 @@ def render_summary(
     rows: list[tuple[str, str, bool]],
     files: dict[str, tuple[int, int]] | None = None,
     min_changed: float | None = None,
+    title: str = "",
 ) -> str:
-    lines = ["### Coverage", "", "| Check | Result | Status |", "| --- | --- | --- |"]
+    heading = f"### Coverage: {title}" if title else "### Coverage"
+    lines = [heading, "", "| Check | Result | Status |", "| --- | --- | --- |"]
     lines += [
         f"| {name} | {detail} | {PASS_MARK if ok else FAIL_MARK} |" for name, detail, ok in rows
     ]
@@ -427,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diff", type=Path)
     parser.add_argument("--min-changed-coverage", type=float)
     parser.add_argument("--summary-file", type=Path)
+    parser.add_argument("--title", default="", help="Names the report in the summary heading")
+    parser.add_argument("--metric", choices=("line", "instruction"), default="line")
     parser.add_argument("--warn-only", action="store_true")
     args = parser.parse_args(argv)
     if args.baseline_margin is not None and args.baseline_margin < 0:
@@ -437,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     changed = None
     ambiguities: list[str] = []
     try:
-        overall = overall_coverage(args.report)
+        overall = overall_coverage(args.report, args.metric)
         baseline = read_baseline(args.baseline) if args.baseline else None
         if args.diff:
             changed = changed_coverage(args.report, args.diff, tracked_files(), ambiguities)
@@ -452,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         # A mistyped path would otherwise disable the ratchet without any sign.
         print(f"::notice::No baseline at {args.baseline}; the ratchet check is skipped.")
 
-    rows = evaluate(overall, args.min_coverage, baseline, args.baseline_margin)
+    rows = evaluate(overall, args.min_coverage, baseline, args.baseline_margin, args.metric)
     changed_files = None
     if args.diff and changed is None:
         print(
@@ -462,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     elif changed is not None:
         changed_files = changed[1]
         rows.append(evaluate_changed(changed[0], changed_files, args.min_changed_coverage))
-    summary = render_summary(rows, changed_files, args.min_changed_coverage)
+    summary = render_summary(rows, changed_files, args.min_changed_coverage, args.title)
     # The marks are not encodable in a legacy Windows console codepage.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -475,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     failed = [name for name, _, ok in rows if not ok]
     # Without this, a stale baseline reads like a coverage drop.
     hint = ""
-    if "Baseline" in failed:
+    if any(name.startswith("Baseline") for name in failed):
         hint = f' Raise "overall" to {overall:.2f} in {args.baseline}.'
     if args.warn_only:
         print(f"::warning::Coverage is outside the configured thresholds (warn-only).{hint}")
