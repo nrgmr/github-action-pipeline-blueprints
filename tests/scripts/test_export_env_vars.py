@@ -63,7 +63,17 @@ class TestCheckName:
 
     @pytest.mark.parametrize(
         "name",
-        ["PATH", "HOME", "CI", "BASH_ENV", "LD_PRELOAD", "GITHUB_ENV", "RUNNER_TEMP", "ACTIONS_X"],
+        [
+            "PATH",
+            "HOME",
+            "CI",
+            "BASH_ENV",
+            "LD_PRELOAD",
+            "GITHUB_ENV",
+            "RUNNER_TEMP",
+            "ACTIONS_X",
+            "RP_EXPORTED_ENV_NAMES",
+        ],
     )
     def test_rejects_reserved(self, name):
         with pytest.raises(export_env_vars.ExportError, match="reserved"):
@@ -154,6 +164,30 @@ class TestMain:
 
         recorded = read_exported(env_file, keep_names=True)[export_env_vars.NAMES_VAR]
         assert recorded == "REGION,TOKEN"
+
+    def test_repeated_export_keeps_names_from_earlier_exports(self, env_file, monkeypatch):
+        monkeypatch.setenv(export_env_vars.NAMES_VAR, "FIRST,SHARED")
+        monkeypatch.setenv("ENV_VARS_JSON", '{"SHARED": "2", "SECOND": "3"}')
+
+        assert export_env_vars.main() == 0
+
+        recorded = read_exported(env_file, keep_names=True)[export_env_vars.NAMES_VAR]
+        assert recorded == "FIRST,SHARED,SECOND"
+
+    def test_repeated_export_rejects_a_tampered_earlier_list(self, env_file, monkeypatch, capsys):
+        monkeypatch.setenv(export_env_vars.NAMES_VAR, "FIRST,PATH")
+        monkeypatch.setenv("ENV_VARS_JSON", '{"SECOND": "3"}')
+
+        assert export_env_vars.main() == 1
+
+        assert not env_file.exists()
+        assert "::error::" in capsys.readouterr().err
+
+    def test_rejects_the_bookkeeping_name(self, env_file, monkeypatch):
+        monkeypatch.setenv("ENV_VARS_JSON", json.dumps({export_env_vars.NAMES_VAR: "x"}))
+
+        assert export_env_vars.main() == 1
+        assert not env_file.exists()
 
 
 class TestClear:
