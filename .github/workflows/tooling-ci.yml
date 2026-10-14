@@ -6,8 +6,18 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Lint + test
+  lint:
+    name: Lint
+    uses: ./.github/workflows/python-lint.yml
+
+  unit-tests:
+    name: Unit tests
+    uses: ./.github/workflows/python-test.yml
+
+  # These tests run oasdiff and Spectral, which the reusable test workflow does not
+  # install, so they skip there and run here with the tools present.
+  integration-tests:
+    name: Integration tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,16 +37,22 @@ jobs:
           node-version: "20"
 
       - name: Install Spectral
-        run: npm install -g @stoplight/spectral-cli@6
+        run: |
+          npm install -g @stoplight/spectral-cli@6
+          spectral --version
 
-      - name: Lint (ruff)
-        run: uv run ruff check .
-
-      - name: Format check (ruff)
-        run: uv run ruff format --check .
-
+      # Coverage is enforced by the unit-tests job, which runs the whole suite.
+      # The tests skip when a tool is missing, so a skip here means a broken install
+      # and must fail the job instead of passing silently.
+      # An explicit shell enables pipefail, so a pytest failure is not hidden by tee.
       - name: Test
-        run: uv run pytest -v
+        shell: bash
+        run: |
+          uv run pytest -m integration -v -rs --no-cov | tee pytest.log
+          if grep -Eq '[0-9]+ skipped' pytest.log; then
+            echo "::error::Integration tests were skipped; oasdiff or Spectral is not usable."
+            exit 1
+          fi
 
   actionlint:
     name: Lint workflows

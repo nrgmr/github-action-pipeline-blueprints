@@ -1,0 +1,161 @@
+name: Coverage Gate
+description: >
+  Apply overall, ratchet, and changed-line coverage thresholds to a JaCoCo,
+  Cobertura, or LCOV report. Language-agnostic - call from any test workflow
+  after it has produced a coverage report.
+
+inputs:
+  report-path:
+    description: "Coverage report (JaCoCo XML, Cobertura XML, or LCOV), relative to working-directory"
+    required: true
+  working-directory:
+    description: "Directory the report and baseline are relative to"
+    default: "."
+  min-coverage:
+    description: "Minimum overall line coverage percentage"
+    default: "80"
+  baseline-path:
+    description: "JSON file like {\"overall\": 83.2}. Overall coverage must not fall below it. Empty disables the ratchet."
+    default: ""
+  baseline-margin:
+    description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
+    default: "1"
+  min-changed-coverage:
+    description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
+    default: ""
+  fail-on-threshold:
+    description: "Fail the job on a threshold violation. When false the violation is reported as a warning."
+    default: "true"
+  comment-on-pr:
+    description: "Post the result as a pull request comment. The calling job needs pull-requests: write."
+    default: "false"
+  github-token:
+    description: "Token used to fetch the base commit for the changed lines check and to post the pull request comment"
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    # upload-artifact rejects duplicate names, so derive one per project directory
+    # and report file. This lets callers use a workflow once per module.
+    - name: Name coverage artifact
+      id: artifact
+      shell: bash
+      env:
+        DIR: ${{ inputs.working-directory }}
+        REPORT: ${{ inputs.report-path }}
+      run: |
+        slug=$(echo "$DIR" | sed 's#^\./##; s#/*$##; s#[^A-Za-z0-9._-]#-#g')
+        if [ -z "$slug" ] || [ "$slug" = "." ]; then
+          slug=root
+        fi
+        echo "name=coverage-$slug-$(basename "$REPORT")" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.working-directory }}/${{ inputs.report-path }}
+        retention-days: 7
+        if-no-files-found: ignore
+
+    - name: Check coverage thresholds
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPORT: ${{ inputs.report-path }}
+        MIN_COVERAGE: ${{ inputs.min-coverage }}
+        BASELINE: ${{ inputs.baseline-path }}
+        BASELINE_MARGIN: ${{ inputs.baseline-margin }}
+        MIN_CHANGED_COVERAGE: ${{ inputs.min-changed-coverage }}
+        FAIL_ON_THRESHOLD: ${{ inputs.fail-on-threshold }}
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # RUNNER_TEMP is shared by every call in the job. Clear it so a failed run
+        # cannot publish an earlier module's summary as its own.
+        rm -f "$RUNNER_TEMP/coverage-summary.md"
+
+        args=("$REPORT" --min-coverage "$MIN_COVERAGE" --summary-file "$RUNNER_TEMP/coverage-summary.md")
+        if [ -n "$BASELINE" ]; then
+          args+=(--baseline "$BASELINE")
+          if [ -n "$BASELINE_MARGIN" ]; then
+            args+=(--baseline-margin "$BASELINE_MARGIN")
+          fi
+        fi
+        if [ -n "$MIN_CHANGED_COVERAGE" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_SHA" ]; then
+            # The checkout is shallow, so fetch the base commit to diff against. Both
+            # sides are single commits, which needs no merge base. HEAD is the merge
+            # commit, so the diff is what the pull request would add. --relative keeps
+            # only files under working-directory, so another project's file with the
+            # same name cannot match this project's report. -U0 leaves only the changed
+            # lines, and the explicit prefixes keep the paths the same whatever the
+            # caller's git config says.
+            # Callers check out with persist-credentials: false, so authenticate this one
+            # fetch with the token instead of leaving it in .git/config for every step.
+            auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
+            echo "::add-mask::$auth"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              fetch --no-tags --depth=1 origin "$BASE_SHA"
+            diff_file="$RUNNER_TEMP/changed-lines.diff"
+            git -c core.quotepath=false diff -U0 --no-color --no-ext-diff --relative \
+              --src-prefix=a/ --dst-prefix=b/ --diff-filter=d "$BASE_SHA" HEAD > "$diff_file"
+            args+=(--diff "$diff_file" --min-changed-coverage "$MIN_CHANGED_COVERAGE")
+          else
+            echo "::notice::min-changed-coverage applies only to pull_request events; the changed lines check is skipped."
+          fi
+        fi
+        if [ "$FAIL_ON_THRESHOLD" != "true" ]; then
+          args+=(--warn-only)
+        fi
+
+        # Capture the exit code so the summary is still written when the gate fails.
+        code=0
+        python3 "${{ github.action_path }}/../../../scripts/coverage_gate.py" "${args[@]}" || code=$?
+        if [ -f "$RUNNER_TEMP/coverage-summary.md" ]; then
+          cat "$RUNNER_TEMP/coverage-summary.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit "$code"
+
+    # Fork PR tokens are read-only, so a failed comment must not fail the job.
+    - name: Comment on pull request
+      if: always() && inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        SUMMARY_FILE: ${{ runner.temp }}/coverage-summary.md
+        ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          if (!fs.existsSync(process.env.SUMMARY_FILE)) return;
+          // One comment per report, so calls for different modules do not overwrite each other.
+          const marker = `<!-- rp-ci-tooling:${process.env.ARTIFACT_NAME} -->`;
+          const body = marker + '\n' + fs.readFileSync(process.env.SUMMARY_FILE, 'utf8');
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100,
+          });
+          // Only a bot comment counts, so a user comment that starts with the marker is never edited.
+          const existing = comments.find(
+            (comment) => comment.user?.type === 'Bot' && comment.body?.startsWith(marker),
+          );
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+          }

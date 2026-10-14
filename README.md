@@ -17,25 +17,33 @@ Releases follow semantic versioning and are automated via release-please. See [d
 Use an exact tag when CI behavior should only change during an intentional upgrade:
 
 ```yaml
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1.2.0
+uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
 ```
 
 Use the floating major tag when backward-compatible updates should apply automatically:
 
 ```yaml
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1
+uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1
 ```
 
 Never pin to a branch:
 
 ```yaml
 # Do not use this.
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@main
+uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@main
 ```
 
 ## This repo's own CI
 
-`tooling-ci.yml` runs on pull requests and pushes to `main`. It lints and formats `scripts/` with ruff, then runs the full pytest suite alongside oasdiff and Spectral. Coverage is measured against `scripts/` and must stay at or above 80%. No external secrets are required.
+`tooling-ci.yml` runs on pull requests and pushes to `main` with five jobs. The first two call this repo's own `python-lint.yml` and `python-test.yml`, so each change is exercised before release.
+
+- **Lint:** lints and format-checks the whole repo with ruff.
+- **Unit tests:** runs the full pytest suite. Coverage is measured against `scripts/` and must stay at or above 80%. Tests that need oasdiff or Spectral skip here.
+- **Integration tests:** installs oasdiff and Spectral and runs only the tests marked `integration`.
+- **Lint workflows:** runs actionlint over the workflow files and fails on errors.
+- **Secret scan (self):** calls this repo's own `secret-scan.yml` reusable workflow.
+
+No external secrets are required.
 
 To run the same checks locally:
 

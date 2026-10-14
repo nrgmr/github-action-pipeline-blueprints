@@ -1,0 +1,23 @@
+name: Export Env Vars
+description: >
+  Export caller-supplied environment variables, such as registry credentials, to
+  the later steps of the job. Secret values are masked in logs. Call it right
+  before the first step that needs them.
+
+inputs:
+  env-vars:
+    description: 'JSON object of plain variables, such as {"FOO":"bar"}. Values must be strings. Empty skips.'
+    default: ""
+  secret-env-vars:
+    description: 'JSON object of secret variables, such as {"NODE_AUTH_TOKEN":"..."}. Values are masked. Empty skips.'
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Export environment variables
+      shell: bash
+      env:
+        ENV_VARS_JSON: ${{ inputs.env-vars }}
+        SECRET_ENV_VARS_JSON: ${{ inputs.secret-env-vars }}
+      run: python3 "${{ github.action_path }}/../../../scripts/export_env_vars.py"
