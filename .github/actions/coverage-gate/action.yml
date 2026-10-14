@@ -14,6 +14,9 @@ inputs:
   min-coverage:
     description: "Minimum overall line coverage percentage"
     default: "80"
+  coverage-metric:
+    description: "Metric behind min-coverage, the ratchet, and the baseline margin: `line` or `instruction`. `instruction` works only with a JaCoCo report. The changed lines check is always line based."
+    default: "line"
   baseline-path:
     description: "JSON file like {\"overall\": 83.2}. Overall coverage must not fall below it. Empty disables the ratchet."
     default: ""
@@ -29,6 +32,9 @@ inputs:
   comment-on-pr:
     description: "Post the result as a pull request comment. The calling job needs pull-requests: write."
     default: "false"
+  title:
+    description: "Names the report in the summary and comment heading. Defaults to working-directory, so calls for different modules are told apart. Nothing is added for the repository root."
+    default: ""
   github-token:
     description: "Token used to fetch the base commit for the changed lines check and to post the pull request comment"
     default: ${{ github.token }}
@@ -71,6 +77,8 @@ runs:
       env:
         REPORT: ${{ inputs.report-path }}
         MIN_COVERAGE: ${{ inputs.min-coverage }}
+        COVERAGE_METRIC: ${{ inputs.coverage-metric }}
+        TITLE: ${{ inputs.title || (inputs.working-directory != '.' && inputs.working-directory || '') }}
         BASELINE: ${{ inputs.baseline-path }}
         BASELINE_MARGIN: ${{ inputs.baseline-margin }}
         MIN_CHANGED_COVERAGE: ${{ inputs.min-changed-coverage }}
@@ -83,7 +91,7 @@ runs:
         # cannot publish an earlier module's summary as its own.
         rm -f "$RUNNER_TEMP/coverage-summary.md"
 
-        args=("$REPORT" --min-coverage "$MIN_COVERAGE" --summary-file "$RUNNER_TEMP/coverage-summary.md")
+        args=("$REPORT" --min-coverage "$MIN_COVERAGE" --summary-file "$RUNNER_TEMP/coverage-summary.md" --metric "$COVERAGE_METRIC" --title "$TITLE")
         if [ -n "$BASELINE" ]; then
           args+=(--baseline "$BASELINE")
           if [ -n "$BASELINE_MARGIN" ]; then
