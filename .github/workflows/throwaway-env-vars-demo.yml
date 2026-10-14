@@ -1,0 +1,42 @@
+name: Throwaway env vars demo
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    name: Export and clear env vars
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Export first batch
+        uses: ./.github/actions/export-env-vars
+        with:
+          env-vars: '{"DEMO_PLAIN":"plain-value"}'
+          secret-env-vars: '{"DEMO_SECRET":"dummy-not-a-real-secret"}'
+
+      - name: Export second batch
+        uses: ./.github/actions/export-env-vars
+        with:
+          env-vars: '{"DEMO_SECOND":"second-value"}'
+
+      - name: Variables are visible to later steps
+        run: |
+          test "$DEMO_PLAIN" = "plain-value"
+          test "$DEMO_SECRET" = "dummy-not-a-real-secret"
+          test "$DEMO_SECOND" = "second-value"
+          echo "secret in log (should print ***): $DEMO_SECRET"
+
+      - name: Clear
+        if: always()
+        uses: ./.github/actions/clear-env-vars
+
+      - name: Every batch is blank after one clear
+        run: |
+          test -z "$DEMO_PLAIN"
+          test -z "$DEMO_SECRET"
+          test -z "$DEMO_SECOND"
