@@ -27,6 +27,14 @@
   The changed lines check matches report paths to `git ls-files`, which lists
   paths relative to the working directory. The action must therefore keep
   generating the diff with `--relative` in that same directory.
+- Changing `scripts/export_env_vars.py`: preserve exit code `1` for invalid input
+  and never put a secret value in an error message. Interface changes to its
+  environment variables must be reflected in
+  `.github/actions/export-env-vars/action.yml`. `--clear` backs
+  `.github/actions/clear-env-vars/action.yml`. Keep the clear step after the last
+  build or test step and before any third-party action, and never add one
+  in between. The limits in the
+  Environment variables section of `docs/tools.md` must stay accurate.
 - Changing any `gen-spec/{language}/` script: the script is called from the
   corresponding language workflow and must write a valid OpenAPI JSON spec to
   stdout.

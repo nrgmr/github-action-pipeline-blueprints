@@ -17,6 +17,7 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 - [Composite actions](#composite-actions)
 - [Coverage gate](#coverage-gate)
 - [docker-build-push.yml](#docker-build-pushyml)
+- [Environment variables](#environment-variables)
 - [image-scan.yml](#image-scanyml)
 - [python-lint-test.yml](#python-lint-testyml)
 - [python-openapi-generate.yml](#python-openapi-generateyml)
@@ -52,6 +53,45 @@ These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists t
 | `min-changed-coverage` | No | `""` | Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on `pull_request` events, after the repository is checked out, and counts only lines the report marks as executable. Empty disables it. |
 | `fail-on-threshold` | No | `true` | When `false`, a violation is reported as a warning and the job passes. Use it as a temporary on-ramp, not a permanent setting. |
 | `comment-on-pr` | No | `false` | Post the result as a pull request comment, updated in place on each run, with one comment per report so calls for different projects do not overwrite each other. The calling workflow must grant `pull-requests: write`. Fork PRs cannot comment, and the comment step never fails the job. |
+
+---
+
+## Environment variables
+
+`python-test.yml` can export environment variables to their build and test steps. Use it for what a private dependency needs, such as `UV_INDEX_*_PASSWORD` for a private Python index. The workflows do not know any variable names, so a new need never requires a change here.
+
+| Option | Kind | Default | Description |
+| --- | --- | --- | --- |
+| `env-vars` | Input | `""` | JSON object of plain variables, such as `{"FOO":"bar"}`. Values are not masked. |
+| `SECRET_ENV_VARS` | Secret | unset | JSON object of secret variables, such as `{"UV_INDEX_PRIVATE_PASSWORD":"..."}`. Every value is masked in logs. |
+
+Both are optional. A reusable workflow cannot take an arbitrary set of named secrets, so one JSON secret carries them all.
+
+```yaml
+jobs:
+  service-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    with:
+      project-dir: service
+      env-vars: '{"CI_REGION":"us-west1"}'
+    secrets:
+      # toJSON quotes and escapes the value, so a quote or newline in it cannot break the JSON.
+      SECRET_ENV_VARS: '{"UV_INDEX_PRIVATE_PASSWORD":${{ toJSON(secrets.PRIVATE_INDEX_PASSWORD) }}}'
+```
+
+The variables are exported by the [export-env-vars](#export-env-vars) action, which each workflow runs after toolchain setup and just before the install, build, or test step. The [clear-env-vars](#clear-env-vars) action then blanks them right after the last of those steps, even when the build fails, so the coverage gate and anything that runs after it never see the values.
+
+### Limits
+
+- **Strings only.** Every value must be a JSON string, so write `"8080"`, not `8080`. Malformed JSON, a non-string value, or an invalid name fails the job before any step runs.
+- **Reserved names.** Names must match `[A-Za-z_][A-Za-z0-9_]*`. `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `HOME`, `SHELL`, `CI`, `BASH_ENV`, `ENV`, `LD_PRELOAD`, and `LD_LIBRARY_PATH` are rejected, so a caller cannot change how the runner or the shared steps behave. `NODE_OPTIONS` is also rejected, because the runner does not allow it in `GITHUB_ENV`. Set it in an `env:` block on the step that needs it instead.
+- **Visibility.** A variable is visible only to the steps between the export and the clear step, which are the install, build, and test steps. That includes the scripts, plugins, and dependencies those commands run, which cannot be avoided if they need the credential. Earlier steps, such as toolchain setup and the tooling checkout, never see it, so a variable needed by setup itself, such as a registry configured through a setup action, cannot be supplied this way. Later steps see an empty value. Do not add a third-party action between the export and the clear step.
+- **Test job only.** Other workflows, such as `python-openapi-generate.yml`, `docker-build-push.yml`, and `image-scan.yml`, do not accept these options.
+- **Masking is by exact value.** A multi-line value is masked line by line. A derived form of a secret, such as its base64 encoding, is not masked. A very short or common value masks every occurrence of it in the logs.
+- **Duplicates.** A name in both `env-vars` and `SECRET_ENV_VARS` takes the secret value.
+- **No fork or Dependabot secrets.** Secrets are not passed to pull requests from forks or to Dependabot, and `GITHUB_TOKEN` is read-only there, so a private install fails on those runs. This is expected.
+- **Size.** A GitHub secret is limited to 48 KB, which bounds `SECRET_ENV_VARS` as a whole.
+- **Caller escapes the JSON.** The workflow cannot fix JSON the caller built badly. Use `toJSON()` for secret values, as in the example above.
 
 ---
 
@@ -609,6 +649,16 @@ The checks behind `python-openapi-generate.yml`, for a spec generated by any lan
 | --- | --- | --- | --- |
 | `teams-webhook-url` | No | `""` | Teams incoming webhook URL for the route major version bump notice. Empty skips the notice. |
 
+### clear-env-vars
+
+The step that ends the exposure started by [export-env-vars](#export-env-vars). It takes no inputs and sets every exported variable to an empty value for the remaining steps. Run it with `if: always()` after the last step that needs them, so a failed build still clears them. It does nothing when nothing was exported.
+
+```yaml
+- name: Clear caller environment variables
+  if: always()
+  uses: nrgmr/rp-ci-tooling/.github/actions/clear-env-vars@v1.2.0
+```
+
 ### coverage-gate
 
 Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any language. The inputs `min-coverage`, `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr` behave as described under [Coverage gate](#coverage-gate). The remaining inputs are:
@@ -628,6 +678,16 @@ Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any lang
     min-coverage: "80"
     baseline-path: coverage-baseline.json
     min-changed-coverage: "80"
+```
+
+### export-env-vars
+
+The step behind [Environment variables](#environment-variables). Inputs `env-vars` and `secret-env-vars` take the same JSON objects as the workflow options above, and the same limits apply. Secret values are masked before anything is written.
+
+```yaml
+- uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
+  with:
+    secret-env-vars: '{"NODE_AUTH_TOKEN":${{ toJSON(secrets.REGISTRY_TOKEN) }}}'
 ```
 
 ### notify-teams
