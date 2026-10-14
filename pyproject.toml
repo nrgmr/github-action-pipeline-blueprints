@@ -15,6 +15,7 @@ dev = [
 testpaths = ["tests/gen_spec", "tests/scripts", "tests/spectral"]
 pythonpath = ["scripts"]
 addopts = "--cov --cov-report=term-missing"
+markers = ["integration: runs oasdiff or Spectral, so the tool must be on PATH"]
 
 [tool.coverage.run]
 source = ["scripts"]

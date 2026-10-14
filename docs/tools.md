@@ -19,16 +19,84 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 - [docker-build-push.yml](#docker-build-pushyml)
 - [Environment variables](#environment-variables)
 - [image-scan.yml](#image-scanyml)
-- [python-lint-test.yml](#python-lint-testyml)
+- [python-lint-test.yml (deprecated)](#python-lint-testyml-deprecated)
+- [python-lint.yml](#python-lintyml)
 - [python-openapi-generate.yml](#python-openapi-generateyml)
+- [python-test.yml](#python-testyml)
 - [release-promotion.yml](#release-promotionyml)
 - [secret-scan.yml](#secret-scanyml)
 
 ---
 
+## python-lint.yml
+
+Runs ruff lint and format checks against a Python service using uv.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pyproject.toml` |
+
+### Usage
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    with:
+      project-dir: sidecar
+```
+
+---
+
+## python-test.yml
+
+Runs pytest with coverage against a Python service using uv, then applies the [coverage gate](#coverage-gate). `pytest-cov` is added by the workflow, so the service does not need to depend on it. Coverage scope follows the service's `[tool.coverage.run]` settings.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pyproject.toml` |
+
+The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # only needed with comment-on-pr
+
+jobs:
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    with:
+      project-dir: sidecar
+      min-coverage: "85"
+      comment-on-pr: true
+```
+
+---
+
 ## Coverage gate
 
-The `coverage-gate` composite action applies thresholds to the coverage report a test job produces. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
+`python-test.yml` finishes by running the gate against the coverage report it produces. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
 
 - **Overall:** total line coverage must be at least `min-coverage`.
 - **Ratchet:** overall coverage must not fall below the value in `baseline-path`, a JSON file such as `{"overall": 83.2}` committed in the service repo. The comparison rounds both the measured coverage and the baseline to two decimals. The overall minimum is compared unrounded, so 79.996% fails an 80% minimum even though it displays as 80.00%. A missing file skips the check and logs a notice, so a team can adopt the ratchet by committing the first baseline. Check the notice if the ratchet never fails, since a mistyped path looks the same. An empty or unrecognised report is an error, not a pass.
@@ -88,9 +156,11 @@ steps:
 
 ---
 
-## python-lint-test.yml
+## python-lint-test.yml (deprecated)
 
-Runs ruff lint and format checks plus pytest against a Python service using uv.
+Deprecated: use [`python-lint.yml`](#python-lintyml) and [`python-test.yml`](#python-testyml) instead. This workflow remains for one major version and is then removed. Callers pinned to an existing tag are unaffected until they upgrade.
+
+It runs the original lint and test jobs, without coverage, and adds a deprecation warning to each run.
 
 ### Inputs
 
@@ -98,21 +168,16 @@ Runs ruff lint and format checks plus pytest against a Python service using uv.
 | --- | --- | --- | --- |
 | `project-dir` | No | `.` | Directory containing the `pyproject.toml` |
 
-### Usage
+### Migration
 
 ```yaml
-name: CI
-
-on:
-  push:
-    branches: ["**"]
-  pull_request:
-
 jobs:
-  lint-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1.2.0
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
     with:
-      project-dir: sidecar
+      fail-on-threshold: false # while adopting coverage; remove once passing
 ```
 
 ---
@@ -278,7 +343,7 @@ jobs:
 
 ## secret-scan.yml
 
-Scans for secrets with [gitleaks](https://github.com/gitleaks/gitleaks). Language-agnostic: every service can call this the same way regardless of what `python-lint-test.yml` / `docker-build-push.yml` variant it also uses.
+Scans for secrets with [gitleaks](https://github.com/gitleaks/gitleaks). Language-agnostic: every service can call this the same way regardless of what `python-lint.yml` / `docker-build-push.yml` variant it also uses.
 
 ### Inputs
 
@@ -597,13 +662,18 @@ on:
         default: false
 
 jobs:
-  lint-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint-test.yml@v1.2.0
+  lint:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    with:
+      project-dir: sidecar
+
+  test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
     with:
       project-dir: sidecar
 
   api-checks:
-    needs: lint-test
+    needs: [lint, test]
     uses: nrgmr/rp-ci-tooling/.github/workflows/python-openapi-generate.yml@v1.2.0
     with:
       project-dir: sidecar
@@ -617,7 +687,7 @@ jobs:
     secrets: inherit
 
   docker:
-    needs: [lint-test, api-checks]
+    needs: [lint, test, api-checks]
     uses: nrgmr/rp-ci-tooling/.github/workflows/docker-build-push.yml@v1.2.0
     with:
       image-name: my-service-sidecar
