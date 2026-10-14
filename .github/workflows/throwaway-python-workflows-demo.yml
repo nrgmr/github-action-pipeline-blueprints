@@ -6,24 +6,54 @@ on:
 permissions:
   contents: read
 
+# Each python-test job exercises one coverage gate behavior. The violation jobs use
+# fail-on-threshold: false so they stay green and report a warning. Only the first
+# job comments on the PR, because every call shares one comment per report name.
 jobs:
   lint:
     name: python-lint
     uses: ./.github/workflows/python-lint.yml
 
-  test:
-    name: python-test with every option
+  all-checks-pass:
+    name: Gate passes (overall, ratchet, margin, changed lines) with env vars and comment
     uses: ./.github/workflows/python-test.yml
     permissions:
       contents: read
       pull-requests: write
     with:
-      min-coverage: "80"
-      min-changed-coverage: "80"
+      baseline-path: .github/throwaway-baselines/pass.json
+      min-changed-coverage: "60"
       comment-on-pr: true
       env-vars: '{"DEMO_PLAIN":"plain-value"}'
     secrets:
       SECRET_ENV_VARS: '{"DEMO_SECRET":"dummy-not-a-real-secret"}'
+
+  ratchet-violation:
+    name: Ratchet violation (coverage below baseline), warn only
+    uses: ./.github/workflows/python-test.yml
+    with:
+      baseline-path: .github/throwaway-baselines/ratchet-violation.json
+      fail-on-threshold: false
+
+  stale-baseline:
+    name: Baseline margin violation (baseline not raised), warn only
+    uses: ./.github/workflows/python-test.yml
+    with:
+      baseline-path: .github/throwaway-baselines/stale.json
+      fail-on-threshold: false
+
+  missing-baseline:
+    name: Baseline file missing (ratchet skipped with a notice)
+    uses: ./.github/workflows/python-test.yml
+    with:
+      baseline-path: .github/throwaway-baselines/does-not-exist.json
+
+  changed-lines-violation:
+    name: Changed lines below minimum, warn only
+    uses: ./.github/workflows/python-test.yml
+    with:
+      min-changed-coverage: "80"
+      fail-on-threshold: false
 
   deprecated:
     name: python-lint-test (deprecated)
