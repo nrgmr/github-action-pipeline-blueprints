@@ -26,6 +26,7 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 - [python-test.yml](#python-testyml)
 - [release-promotion.yml](#release-promotionyml)
 - [secret-scan.yml](#secret-scanyml)
+- [typescript-test.yml](#typescript-testyml)
 
 ---
 
@@ -151,9 +152,38 @@ jobs:
 
 ---
 
+## typescript-test.yml
+
+Runs a pnpm install, a type check, and tests with LCOV coverage, then applies the [coverage gate](#coverage-gate). The pnpm version comes from the `packageManager` field in `package.json`. Type errors and test failures always fail the job, regardless of `fail-on-threshold`.
+
+The default `test-command` uses Vitest flags and needs `@vitest/coverage-v8` or `@vitest/coverage-istanbul` installed. For Jest, set `test-command` to `pnpm test --coverage --coverageReporters=lcov`.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing `package.json` and `pnpm-lock.yaml` |
+| `node-version` | No | `20` | Node.js version |
+| `typecheck-command` | No | `pnpm exec tsc --noEmit` | Type-check command, run from `project-dir` |
+| `test-command` | No | `pnpm test --coverage --coverage.reporter=lcov` | Test command, run from `project-dir`. Must write an LCOV report to `coverage/lcov.info`. |
+
+The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+jobs:
+  ui-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/typescript-test.yml@v1.2.0
+    with:
+      project-dir: ui
+```
+
+---
+
 ## Coverage gate
 
-`python-test.yml` and `java-test.yml` finish by running the same gate against the coverage report they produce. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
+`python-test.yml`, `java-test.yml`, and `typescript-test.yml` finish by running the same gate against the coverage report they produce. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
 
 - **Overall:** total line coverage must be at least `min-coverage`. `java-test.yml` can measure instruction coverage instead with `coverage-metric`.
 - **Ratchet:** overall coverage must not fall below the value in `baseline-path`, a JSON file such as `{"overall": 83.2}` committed in the service repo. The comparison rounds both the measured coverage and the baseline to two decimals. The overall minimum is compared unrounded, so 79.996% fails an 80% minimum even though it displays as 80.00%. A missing file skips the check and logs a notice, so a team can adopt the ratchet by committing the first baseline. Check the notice if the ratchet never fails, since a mistyped path looks the same. An empty or unrecognised report is an error, not a pass.
@@ -168,7 +198,7 @@ Results appear in the job summary whenever the report is readable. The coverage 
 
 ### Coverage gate inputs
 
-These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists the remaining inputs.
+These inputs configure the thresholds and are shared by all three test workflows. [coverage-gate](#coverage-gate-1) lists the remaining inputs.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -183,7 +213,7 @@ These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists t
 
 ## Environment variables
 
-The [export-env-vars](#export-env-vars) and [clear-env-vars](#clear-env-vars) actions pass environment variables, such as registry credentials, to the build and test steps of a job. Use them for what a private dependency needs, such as Maven repository credentials read by `settings.xml`, or `UV_INDEX_*_PASSWORD` for a private Python index. The actions do not know any variable names, so a new need never requires a change here.
+The [export-env-vars](#export-env-vars) and [clear-env-vars](#clear-env-vars) actions pass environment variables, such as registry credentials, to the build and test steps of a job. Use them for what a private dependency needs, such as `NODE_AUTH_TOKEN` for the `@nrgmr` scope on GitHub Packages, Maven repository credentials read by `settings.xml`, or `UV_INDEX_*_PASSWORD` for a private Python index. The actions do not know any variable names, so a new need never requires a change here.
 
 Run `export-env-vars` right before the first step that needs the variables, and `clear-env-vars` with `if: always()` right after the last one, so the coverage gate and anything that runs after it never see the values. `export-env-vars` can run more than once before the single clear step.
 
@@ -208,6 +238,7 @@ steps:
 - **Masking is by exact value.** A multi-line value is masked line by line. A derived form of a secret, such as its base64 encoding, is not masked. A very short or common value masks every occurrence of it in the logs.
 - **Duplicates.** A name in both `env-vars` and `secret-env-vars` takes the secret value.
 - **No fork or Dependabot secrets.** Secrets are not passed to pull requests from forks or to Dependabot, and `GITHUB_TOKEN` is read-only there, so a private install fails on those runs. This is expected.
+- **`GITHUB_TOKEN` and GitHub Packages.** The caller must grant `packages: read`, and the package must allow this repository access under its package settings. Otherwise the install fails with a 403 even though the variable is set.
 - **Size.** A GitHub secret is limited to 48 KB, which bounds `secret-env-vars` as a whole.
 - **Caller escapes the JSON.** The action cannot fix JSON the caller built badly. Use `toJSON()` for secret values, as in the example above.
 
