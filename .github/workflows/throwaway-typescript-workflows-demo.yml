@@ -1,0 +1,72 @@
+name: Throwaway TypeScript workflows demo
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Each job exercises one typescript-test.yml behavior against throwaway/ts-demo. The
+# violation jobs use fail-on-threshold: false so they stay green and report a
+# warning. Only the first job comments on the PR, because every call shares one
+# comment per report name.
+jobs:
+  all-checks-pass:
+    name: Gate passes (overall, ratchet, margin, changed lines) with env vars and comment
+    uses: ./.github/workflows/typescript-test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      baseline-path: pass.json
+      min-changed-coverage: "40"
+      comment-on-pr: true
+      env-vars: '{"DEMO_PLAIN":"plain-value"}'
+    secrets:
+      SECRET_ENV_VARS: '{"DEMO_SECRET":"dummy-not-a-real-secret"}'
+
+  ratchet-violation:
+    name: Ratchet violation (coverage below baseline), warn only
+    uses: ./.github/workflows/typescript-test.yml
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      baseline-path: ratchet-violation.json
+      fail-on-threshold: false
+
+  stale-baseline:
+    name: Baseline margin violation (baseline not raised), warn only
+    uses: ./.github/workflows/typescript-test.yml
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      baseline-path: stale.json
+      fail-on-threshold: false
+
+  missing-baseline:
+    name: Baseline file missing (ratchet skipped with a notice)
+    uses: ./.github/workflows/typescript-test.yml
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      baseline-path: does-not-exist.json
+
+  changed-lines-violation:
+    name: Changed lines below minimum, warn only
+    uses: ./.github/workflows/typescript-test.yml
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      min-changed-coverage: "80"
+      fail-on-threshold: false
+
+  custom-commands:
+    name: Custom typecheck and test commands
+    uses: ./.github/workflows/typescript-test.yml
+    with:
+      project-dir: throwaway/ts-demo
+      min-coverage: "50"
+      typecheck-command: "pnpm exec tsc --noEmit --pretty false"
+      test-command: "pnpm exec vitest run --coverage --coverage.reporter=lcov"
