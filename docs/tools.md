@@ -122,7 +122,7 @@ jobs:
 
 ### Multi-module builds
 
-A parent `pom.xml` with `<packaging>pom</packaging>` produces no coverage report of its own, because JaCoCo writes one per module. Set `module` to the module to test, once per module, usually with a matrix. The workflow runs `mvn -pl <module> -am`, so the modules it depends on are built too, and reads the report from `<project-dir>/<module>/target/site/jacoco/jacoco.xml`. `baseline-path` is relative to the module directory, and the coverage artifact is named after it, such as `coverage-api-service-jacoco.xml`.
+A parent `pom.xml` with `<packaging>pom</packaging>` produces no coverage report of its own, because JaCoCo writes one per module. Set `module` to the module to test, once per module, usually with a matrix. The workflow runs `mvn -pl <module> -am`, so the modules it depends on are built too, and reads the report from `<project-dir>/<module>/target/site/jacoco/jacoco.xml`. `baseline-path` stays relative to `project-dir`, so give each module its own file such as `service/coverage-baseline.json`. The coverage artifact is named after it, such as `coverage-api-service-jacoco.xml`.
 
 ```yaml
 jobs:
@@ -133,13 +133,16 @@ jobs:
         include:
           - module: service
             min-coverage: "63"
+            baseline-path: service/coverage-baseline.json
           - module: web
             min-coverage: "60"
+            baseline-path: web/coverage-baseline.json
     uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
     with:
       project-dir: api
       module: ${{ matrix.module }}
       min-coverage: ${{ matrix.min-coverage }}
+      baseline-path: ${{ matrix.baseline-path }}
 ```
 
 - Modules it depends on run their tests again, so each call pays for them. A module with many upstream dependencies costs more CI time.
