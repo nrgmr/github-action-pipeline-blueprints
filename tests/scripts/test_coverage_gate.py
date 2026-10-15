@@ -198,6 +198,19 @@ class TestChangedCoverage:
         percent, files = coverage_gate.changed_coverage(report, diff)
         assert (percent, files) == (100.0, {"com/acme/B.java": (5, 5)})
 
+    def test_a_changed_file_matches_only_its_own_report_entry(self, tmp_path):
+        # `pytest --cov=app` names files relative to app/, so app/sub/utils.py is reported
+        # as sub/utils.py and app/utils.py as utils.py. Both are suffixes of the change.
+        report = write(
+            tmp_path,
+            "c.xml",
+            '<coverage><class filename="utils.py"><line number="1" hits="1"/></class>'
+            '<class filename="sub/utils.py"><line number="1" hits="0"/></class></coverage>',
+        )
+        diff = diff_for(tmp_path, {"app/sub/utils.py": ["1"]})
+        percent, files = coverage_gate.changed_coverage(report, diff)
+        assert (percent, files) == (0.0, {"sub/utils.py": (0, 1)})
+
     def test_sums_lines_across_files_rather_than_averaging(self, tmp_path):
         covered = "".join(f"DA:{n},1\n" for n in range(1, 91))
         missed = "".join(f"DA:{n},0\n" for n in range(1, 11))
