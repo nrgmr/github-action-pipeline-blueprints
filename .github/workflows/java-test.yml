@@ -11,8 +11,8 @@ on:
         description: >
           Maven module to build and test, relative to project-dir, for a
           multi-module build. Empty builds project-dir itself. Modules it
-          depends on are built and tested too, and the coverage report and
-          baseline-path are read from the module's own directory.
+          depends on are built and tested too, and the coverage report is read
+          from the module's own directory.
         type: string
         default: ""
       java-version:
@@ -121,7 +121,9 @@ jobs:
           working-directory: ${{ inputs.module && format('{0}/{1}', inputs.project-dir, inputs.module) || inputs.project-dir }}
           min-coverage: ${{ inputs.min-coverage }}
           coverage-metric: ${{ inputs.coverage-metric }}
-          baseline-path: ${{ inputs.baseline-path }}
+          # The gate runs in the module directory, so anchor the path to project-dir
+          # to keep it relative to project-dir as documented.
+          baseline-path: ${{ inputs.baseline-path && format('{0}/{1}/{2}', github.workspace, inputs.project-dir, inputs.baseline-path) || '' }}
           baseline-margin: ${{ inputs.baseline-margin }}
           min-changed-coverage: ${{ inputs.min-changed-coverage }}
           fail-on-threshold: ${{ inputs.fail-on-threshold }}
