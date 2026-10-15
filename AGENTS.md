@@ -19,6 +19,11 @@
   version-limit violations — the composite action branches on this code to
   implement the `override-version-limit` flow. Exit `1` is reserved for
   unexpected errors; exit `0` is clean.
+- Changing `scripts/coverage_gate.py`: preserve exit code `2` for threshold
+  violations. The `coverage-gate` composite action implements
+  `fail-on-threshold: false` by passing `--warn-only`, which maps `2` to `0`.
+  Exit `1` is reserved for errors and always fails the job. Interface changes
+  to args must be reflected in `.github/actions/coverage-gate/action.yml`.
 - Changing any `gen-spec/{language}/` script: the script is called from the
   corresponding language workflow and must write a valid OpenAPI JSON spec to
   stdout.
@@ -52,6 +57,12 @@ would drift from the workflow version the caller pinned.
     ref: ${{ job.workflow_sha }}
     path: .rp-ci-tooling
 ```
+
+**Coverage in test workflows:** language test workflows produce a coverage
+report and then call `./.rp-ci-tooling/.github/actions/coverage-gate`. Do not
+add per-language threshold logic; extend `scripts/coverage_gate.py` instead.
+Reusable workflows must not declare `permissions:` that exceed what the caller
+grants, so the PR comment option documents the required caller permission.
 
 **Composite action secrets:** composite actions cannot declare `secrets:`. Pass
 secret values as regular `inputs`. They are still masked in logs when sourced
