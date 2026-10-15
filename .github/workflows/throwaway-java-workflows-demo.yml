@@ -1,0 +1,91 @@
+name: Throwaway Java workflows demo
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Each job exercises one java-test.yml behavior against the projects under throwaway/.
+# The violation jobs use fail-on-threshold: false so they stay green and report a
+# warning. Only the first job comments on the PR, because every call shares one
+# comment per report name.
+jobs:
+  all-checks-pass:
+    name: Single module, gate passes (overall, ratchet, margin, changed lines) with env vars and comment
+    uses: ./.github/workflows/java-test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      project-dir: throwaway/java-single
+      min-coverage: "50"
+      baseline-path: pass.json
+      min-changed-coverage: "40"
+      comment-on-pr: true
+      env-vars: '{"DEMO_PLAIN":"plain-value"}'
+    secrets:
+      SECRET_ENV_VARS: '{"DEMO_SECRET":"dummy-not-a-real-secret"}'
+
+  instruction-metric:
+    name: Single module, instruction metric
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-single
+      coverage-metric: instruction
+      min-coverage: "1"
+      baseline-margin: ""
+
+  ratchet-violation:
+    name: Single module, ratchet violation (coverage below baseline), warn only
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-single
+      min-coverage: "50"
+      baseline-path: ratchet-violation.json
+      fail-on-threshold: false
+
+  stale-baseline:
+    name: Single module, baseline margin violation (baseline not raised), warn only
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-single
+      min-coverage: "50"
+      baseline-path: stale.json
+      fail-on-threshold: false
+
+  missing-baseline:
+    name: Single module, baseline file missing (ratchet skipped with a notice)
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-single
+      min-coverage: "50"
+      baseline-path: does-not-exist.json
+
+  changed-lines-violation:
+    name: Single module, changed lines below minimum, warn only
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-single
+      min-coverage: "50"
+      min-changed-coverage: "80"
+      fail-on-threshold: false
+
+  module-passes:
+    name: Multi-module, baseline-path resolved against project-dir (must find the file)
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-multi
+      module: service
+      min-coverage: "70"
+      baseline-path: service-pass.json
+
+  module-ratchet-violation:
+    name: Multi-module, ratchet violation proves the baseline is found, warn only
+    uses: ./.github/workflows/java-test.yml
+    with:
+      project-dir: throwaway/java-multi
+      module: service
+      min-coverage: "70"
+      baseline-path: service-ratchet-violation.json
+      fail-on-threshold: false
