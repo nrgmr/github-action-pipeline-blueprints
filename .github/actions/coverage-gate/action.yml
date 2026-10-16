@@ -21,10 +21,10 @@ inputs:
     description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
     default: "1"
   min-changed-coverage:
-    description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
+    description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events, after the repository is checked out, and counts only lines the report marks as executable. Empty disables."
     default: ""
   fail-on-threshold:
-    description: "Fail the job on a threshold violation. When false the violation is reported as a warning."
+    description: "Fail the job on a threshold violation. Only the value false reports it as a warning instead."
     default: "true"
   comment-on-pr:
     description: "Post the result as a pull request comment. The calling job needs pull-requests: write."
@@ -87,10 +87,12 @@ runs:
           if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_SHA" ]; then
             # The checkout has only the latest commit, so fetch the base commit to
             # diff against. Authenticate this one fetch with the token, since callers
-            # do not persist credentials.
+            # do not persist credentials. The empty header first clears one that a caller's
+            # checkout did persist, because GitHub rejects a request with two Authorization headers.
             auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
             echo "::add-mask::$auth"
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            git -c "http.https://github.com/.extraheader=" \
+              -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
               fetch --no-tags --depth=1 origin "$BASE_SHA"
             # Diff the base against HEAD (the merge commit) to get only the lines the
             # pull request adds. Limit it to this project's files so a same-named file
@@ -103,7 +105,8 @@ runs:
             echo "::notice::min-changed-coverage applies only to pull_request events; the changed lines check is skipped."
           fi
         fi
-        if [ "$FAIL_ON_THRESHOLD" != "true" ]; then
+        # Only an explicit "false" relaxes the gate, so a typo such as "False" cannot disable it.
+        if [ "$FAIL_ON_THRESHOLD" = "false" ]; then
           args+=(--warn-only)
         fi
 

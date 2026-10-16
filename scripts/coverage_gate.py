@@ -13,7 +13,11 @@ A fourth check holds new work to a standard regardless of the overall figure. Wi
 --min-changed-coverage and --diff (the output of `git diff -U0`), the combined line
 coverage of the lines the diff adds or modifies must be >= that minimum. Only lines the
 report marks as executable count, so comments, tests and docs are ignored, and the check
-is skipped when no changed line appears in the report.
+is skipped when no changed line appears in the report. Report paths are matched to the files
+`git ls-files` lists, so run it from a git checkout, in the directory the diff is relative to.
+
+The report format follows the file extension: `.xml` is JaCoCo or Cobertura, anything else
+is read as LCOV.
 
 With --warn-only a violation is reported as a warning and the exit code stays 0,
 so teams can adopt the gate without failing their jobs.
@@ -21,7 +25,8 @@ so teams can adopt the gate without failing their jobs.
 Exit codes:
     0  - all checks passed or skipped, or a violation under --warn-only
     2  - at least one threshold was violated
-    1  - error (unreadable or empty report, unknown format, malformed baseline)
+    1  - error (unreadable or empty report, unknown format, malformed baseline,
+         changed lines check outside a git checkout)
 
 Usage:
     python3 coverage_gate.py <report> --min-coverage 80 \\
@@ -33,8 +38,11 @@ Usage:
 import argparse
 import json
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
+from collections.abc import Collection, Iterable
 from pathlib import Path
 
 
@@ -118,7 +126,8 @@ def _lines_xml(path: Path) -> dict[str, dict[int, bool]]:
                 name = f"{package.get('name', '')}/{source.get('name')}"
                 lines = files.setdefault(_normalise(name).lstrip("/"), {})
                 for line in source.findall("line"):
-                    lines[int(line.get("nr", 0))] = int(line.get("ci", 0)) > 0
+                    number = int(line.get("nr", 0))
+                    lines[number] = lines.get(number, False) or int(line.get("ci", 0)) > 0
         return files
     if root.tag == "coverage":
         # Inner classes share a file, so merge by line number.
@@ -153,12 +162,109 @@ def line_coverage(path: Path) -> dict[str, dict[int, bool]]:
         raise GateError(f"{path}: unreadable coverage report ({exc})") from exc
 
 
-def _same_file(changed: str, reported: str) -> bool:
-    # Reports name files relative to a source root and `changed` is relative to the repo
-    # root, so one is normally a path suffix of the other. Absolute LCOV paths reverse it.
-    return (
-        changed == reported or changed.endswith("/" + reported) or reported.endswith("/" + changed)
-    )
+def _is_absolute(path: str) -> bool:
+    return path.startswith("/") or re.match(r"[A-Za-z]:/", path) is not None
+
+
+def _under_root(name: str, root: str) -> str:
+    # Absolute report paths start at the checkout, while changed paths are relative to the
+    # working directory, so strip the working directory when the report is under it.
+    prefix = root + "/"
+    return name[len(prefix) :] if name.startswith(prefix) else name
+
+
+def tracked_files() -> set[str]:
+    """Return the files git tracks under the working directory."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise GateError(
+            "the changed lines check needs a git checkout and must run in the directory "
+            "the diff is relative to"
+        ) from exc
+    return {_normalise(path) for path in result.stdout.split("\0") if path}
+
+
+def _prefix(path: str, entry: str) -> str:
+    return path[: len(path) - len(entry)]
+
+
+def _fits(
+    entries: Iterable[str], tracked: Iterable[str], exact: Collection[str] = ()
+) -> dict[str, list[str]]:
+    """Map each report entry to the tracked files it could name, leaving out entries with none.
+
+    An `exact` entry is already a full path from the working directory, so it names only itself.
+    """
+    tracked = set(tracked)
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for path in tracked:
+        by_name[path.rsplit("/", 1)[-1]].append(path)
+    fits = {}
+    for entry in entries:
+        named = by_name.get(entry.rsplit("/", 1)[-1], [])
+        if entry in exact:
+            found = [entry] if entry in tracked else []
+        elif _is_absolute(entry):
+            found = [path for path in named if entry.endswith("/" + path)]
+        else:
+            found = [path for path in named if path == entry or path.endswith("/" + entry)]
+        if found:
+            fits[entry] = sorted(found)
+    return fits
+
+
+def _resolve(fits: dict[str, list[str]]) -> dict[str, str]:
+    """Map each report entry to the one tracked file it names.
+
+    A report names files relative to a source root it does not state, so `utils.py` fits
+    `app/utils.py` and `app/migrations/utils.py` alike. The source root is the prefix most
+    entries share, so the file whose prefix serves the most entries is the one the report
+    means. A tie goes to the path nearest the project root. An absolute entry written under
+    a checkout root this run cannot see, such as a container path, names the longest tracked
+    path it ends with.
+    """
+    relative = {entry: found for entry, found in fits.items() if not _is_absolute(entry)}
+    support = Counter(_prefix(path, entry) for entry, found in relative.items() for path in found)
+    resolved = {}
+    for entry, found in fits.items():
+        if entry in relative:
+            resolved[entry] = max(found, key=lambda p, e=entry: (support[_prefix(p, e)], -len(p)))
+        else:
+            resolved[entry] = max(found, key=len)
+    return resolved
+
+
+def _ambiguities(
+    fits: dict[str, list[str]], resolved: dict[str, str], changed: dict[str, set[int]]
+) -> list[str]:
+    """Describe each entry that fits several files when a changed file is one of them.
+
+    The pick rests on a guess about the source root, so a changed file among the candidates
+    either went unscored or was scored with another file's entry. A candidate that another
+    entry resolves to is scored through that entry, so it is not a candidate here. An
+    absolute entry names the longest path it ends with, which is not a guess.
+    """
+    notes = []
+    for entry, found in sorted(fits.items()):
+        if _is_absolute(entry):
+            continue
+        taken = {path for other, path in resolved.items() if other != entry}
+        candidates = [p for p in found if p == resolved[entry] or p not in taken]
+        if len(candidates) > 1 and any(changed.get(p) for p in candidates):
+            notes.append(
+                f"{entry} in the report fits {', '.join(candidates)}; "
+                f"it is used for {resolved[entry]}. "
+                "Set working-directory to the module folder to avoid this."
+            )
+    return notes
 
 
 _HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
@@ -173,7 +279,9 @@ def changed_lines(diff: Path) -> dict[str, set[int]]:
     # A removed or added line can start with "--- " or "+++ ", so a file path counts only
     # in the header between "diff --git" and the first hunk.
     in_header = False
-    for row in diff.read_text(encoding="utf-8").splitlines():
+    # Split on newlines only: splitlines() also breaks at characters such as form feed, which
+    # source files can contain. Changed files need not be UTF-8, and only the headers matter.
+    for row in diff.read_text(encoding="utf-8", errors="replace").split("\n"):
         if row.startswith("diff --git "):
             in_header, lines = True, None
         elif in_header and row.startswith("+++ "):
@@ -189,19 +297,46 @@ def changed_lines(diff: Path) -> dict[str, set[int]]:
     return changed
 
 
-def changed_coverage(report: Path, diff: Path) -> tuple[float, dict[str, tuple[int, int]]] | None:
+def changed_coverage(
+    report: Path,
+    diff: Path,
+    tracked: Iterable[str],
+    ambiguities: list[str] | None = None,
+) -> tuple[float, dict[str, tuple[int, int]]] | None:
     """Return combined coverage of the changed lines in the report and each file's counts.
 
     Only changed lines the report marks as executable count, so comments, blank lines and
-    imports do not. Returns None when no such line exists.
+    imports do not. Returns None when no such line exists. `tracked` lists the repository
+    files under the working directory. A report entry belongs to the one tracked file it
+    names, so a changed file the report omits, such as one excluded from coverage, is
+    skipped rather than scored against a same-named file. Counts are keyed by the file's
+    path relative to the working directory. Entries that fit several files, one of them
+    changed, are described in `ambiguities` when it is given.
     """
     changed = changed_lines(diff)
+    coverage = line_coverage(report)
+    root = Path.cwd().as_posix()
+    entries = {_under_root(name, root): name for name in coverage}
+    # An absolute entry under the working directory names exactly one file once it is stripped.
+    exact = {entry for entry, name in entries.items() if entry != name}
+    fits = _fits(entries, tracked, exact)
+    resolved = _resolve(fits)
+    if ambiguities is not None:
+        ambiguities += _ambiguities(fits, resolved, changed)
+    # Two entries naming one file are merged by line number, as the overall check merges
+    # duplicate records, so the file's lines are neither counted twice nor split.
+    owners: dict[str, list[str]] = defaultdict(list)
+    for entry in sorted(resolved):
+        owners[resolved[entry]].append(entry)
     matched = {}
-    for name, hits in line_coverage(report).items():
-        wanted = set().union(*(lines for path, lines in changed.items() if _same_file(path, name)))
-        counted = [hits[number] for number in wanted if number in hits]
+    for path, names in owners.items():
+        hits: dict[int, bool] = {}
+        for entry in names:
+            for number, hit in coverage[entries[entry]].items():
+                hits[number] = hits.get(number, False) or hit
+        counted = [hits[number] for number in changed.get(path, ()) if number in hits]
         if counted:
-            matched[name] = (sum(counted), len(counted))
+            matched[path] = (sum(counted), len(counted))
     if not matched:
         return None
     covered = sum(c for c, _ in matched.values())
@@ -243,7 +378,10 @@ def evaluate_changed(
 ) -> tuple[str, str, bool]:
     covered = sum(c for c, _ in files.values())
     total = sum(t for _, t in files.values())
-    detail = f"{percent:.2f}% ({covered}/{total} lines in {len(files)} files, min {min_changed:g}%)"
+    noun = "file" if len(files) == 1 else "files"
+    detail = (
+        f"{percent:.2f}% ({covered}/{total} lines in {len(files)} {noun}, min {min_changed:g}%)"
+    )
     return ("Changed lines", detail, percent >= min_changed)
 
 
@@ -297,14 +435,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--diff and --min-changed-coverage must be used together")
 
     changed = None
+    ambiguities: list[str] = []
     try:
         overall = overall_coverage(args.report)
         baseline = read_baseline(args.baseline) if args.baseline else None
         if args.diff:
-            changed = changed_coverage(args.report, args.diff)
+            changed = changed_coverage(args.report, args.diff, tracked_files(), ambiguities)
     except GateError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
+
+    for note in ambiguities:
+        print(f"::warning::{note}")
 
     if args.baseline and baseline is None:
         # A mistyped path would otherwise disable the ratchet without any sign.

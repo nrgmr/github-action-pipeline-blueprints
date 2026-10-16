@@ -24,6 +24,9 @@
   `fail-on-threshold: false` by passing `--warn-only`, which maps `2` to `0`.
   Exit `1` is reserved for errors and always fails the job. Interface changes
   to args must be reflected in `.github/actions/coverage-gate/action.yml`.
+  The changed lines check matches report paths to `git ls-files`, which lists
+  paths relative to the working directory. The action must therefore keep
+  generating the diff with `--relative` in that same directory.
 - Changing any `gen-spec/{language}/` script: the script is called from the
   corresponding language workflow and must write a valid OpenAPI JSON spec to
   stdout.

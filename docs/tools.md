@@ -27,27 +27,29 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 
 ## Coverage gate
 
-The test workflows finish by running the gate against the coverage report they produce. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
+The `coverage-gate` composite action applies thresholds to the coverage report a test job produces. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
 
 - **Overall:** total line coverage must be at least `min-coverage`.
 - **Ratchet:** overall coverage must not fall below the value in `baseline-path`, a JSON file such as `{"overall": 83.2}` committed in the service repo. The comparison rounds both the measured coverage and the baseline to two decimals. The overall minimum is compared unrounded, so 79.996% fails an 80% minimum even though it displays as 80.00%. A missing file skips the check and logs a notice, so a team can adopt the ratchet by committing the first baseline. Check the notice if the ratchet never fails, since a mistyped path looks the same. An empty or unrecognised report is an error, not a pass.
 - **Baseline margin:** overall coverage must not exceed the baseline by more than `baseline-margin` percentage points, `1` by default. The baseline file is edited by hand, so without this check it falls behind as coverage improves and the ratchet protects less over time. A pull request that adds tests past the margin fails until it also raises `overall` in the baseline file, and the failure message gives the value to write. Set `baseline-margin` to `"0"` to require an exact match, or to an empty string to turn the check off. Like the others, it only warns when `fail-on-threshold` is `false`.
-- **Changed lines:** the lines a pull request adds or modifies must reach `min-changed-coverage` combined, so new code is held to a standard even when the overall figure is high enough to absorb it. Only lines the report marks as executable count, so comments, blank lines, and imports do not, and an untested edit to a large, well-covered file still fails. The figure is covered lines over total lines across all files, not an average of per-file percentages. Files the report does not cover, such as tests, docs, and workflow files, are ignored, and the check is skipped with a notice when no changed line appears in the report. It runs only on `pull_request` events, comparing the merge commit with the base branch, and is skipped with a notice on other events. The job summary and pull request comment list each changed file with the share of its changed lines that are covered and a pass or fail mark against `min-changed-coverage`, lowest first and capped at 20, so a failure points at where to add tests. Only files under the project directory (`project-dir`) are considered. Report paths are matched to them by trailing path segments, so a source root that differs from the project root needs no configuration.
+- **Changed lines:** the lines a pull request adds or modifies must reach `min-changed-coverage` combined, so new code is held to a standard even when the overall figure is high enough to absorb it. Only lines the report marks as executable count, so comments, blank lines, and imports do not. The figure is covered lines over total lines across all files, not an average of per-file percentages. Files the report does not cover, such as tests, docs, and workflow files, are ignored, and the check is skipped with a notice when no changed line appears in the report. It runs only on `pull_request` events, comparing the merge commit with the base branch, and is skipped with a notice on other events. It needs a git checkout, so run it after `actions/checkout`. The job summary and pull request comment list each changed file under `working-directory` by its path relative to `working-directory`, lowest coverage first and capped at 20. A changed file the report omits, such as one excluded from coverage, is skipped. When a report path could name several files and one of them changed, the job logs a warning that names the file it used. The usual cause is a `working-directory` that spans several modules.
 
 A reviewer should question any pull request that lowers a baseline file, because it quietly weakens the ratchet. Two open pull requests that both raise the same baseline conflict on that file, so the second resolves it after the first merges. Measure the first baseline on the CI runner, not locally, since results can differ by a few hundredths between platforms.
 
-Results appear in the job summary whenever the report is readable. The coverage report is uploaded for 7 days as an artifact named `coverage-<project-dir>-<report file>`, such as `coverage-api-coverage.xml`, so calls for different projects do not collide. Nothing is uploaded when the tests fail.
+The report format follows the file extension: `.xml` is JaCoCo or Cobertura, and any other extension is read as LCOV.
+
+Results appear in the job summary whenever the report is readable. The coverage report is uploaded for 7 days as an artifact named `coverage-<working-directory>-<report file>`, such as `coverage-api-coverage.xml`, so calls for different directories do not collide. Nothing is uploaded when the tests fail.
 
 ### Coverage gate inputs
 
-These inputs are shared by the test workflows.
+These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists the remaining inputs.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `min-coverage` | No | `80` | Minimum overall line coverage percentage |
-| `baseline-path` | No | `""` | Ratchet baseline file, relative to `project-dir`. Empty disables the ratchet and the baseline margin. |
+| `baseline-path` | No | `""` | Ratchet baseline file, relative to `working-directory`. Empty disables the ratchet and the baseline margin. |
 | `baseline-margin` | No | `1` | Maximum percentage points coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables it. |
-| `min-changed-coverage` | No | `""` | Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on `pull_request` events and counts only lines the report marks as executable. Empty disables it. |
+| `min-changed-coverage` | No | `""` | Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on `pull_request` events, after the repository is checked out, and counts only lines the report marks as executable. Empty disables it. |
 | `fail-on-threshold` | No | `true` | When `false`, a violation is reported as a warning and the job passes. Use it as a temporary on-ramp, not a permanent setting. |
 | `comment-on-pr` | No | `false` | Post the result as a pull request comment, updated in place on each run, with one comment per report so calls for different projects do not overwrite each other. The calling workflow must grant `pull-requests: write`. Fork PRs cannot comment, and the comment step never fails the job. |
 
@@ -609,11 +611,24 @@ The checks behind `python-openapi-generate.yml`, for a spec generated by any lan
 
 ### coverage-gate
 
-The checks behind the test workflows, for a JaCoCo, Cobertura, or LCOV report produced by any language. Inputs: `report-path` (required), `working-directory`, `min-coverage`, `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr`, which behave as described under [Coverage gate](#coverage-gate), plus:
+Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any language. The inputs `min-coverage`, `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr` behave as described under [Coverage gate](#coverage-gate). The remaining inputs are:
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `github-token` | No | `github.token` | Token used to fetch the base commit for the changed lines check and to post the pull request comment |
+| `report-path` | Yes | | Coverage report, relative to `working-directory` |
+| `working-directory` | No | `.` | Directory the report and `baseline-path` are relative to. Only files under it count for the changed lines check. In a repository with several modules, set it to the module folder and call the gate once per module, so a report path can only match files in that module. |
+| `github-token` | No | `github.token` | Token used to fetch the base commit for the changed lines check and to post the pull request comment. The comment is updated in place only when a bot posted it, so a personal access token creates a new comment on every run. Keep the default unless the job needs another token. |
+
+```yaml
+# Replace v1.2.0 with the released tag your service is adopting.
+- uses: actions/checkout@v4
+- uses: nrgmr/rp-ci-tooling/.github/actions/coverage-gate@v1.2.0
+  with:
+    report-path: coverage.xml
+    min-coverage: "80"
+    baseline-path: coverage-baseline.json
+    min-changed-coverage: "80"
+```
 
 ### notify-teams
 
