@@ -37,19 +37,26 @@ runs:
   using: composite
   steps:
     # upload-artifact rejects duplicate names, so derive one per project directory
-    # and report file. This lets callers use a workflow once per module.
+    # and report file. This lets callers use a workflow once per module. Matrix legs
+    # share a directory and report, so each gets its index as well.
     - name: Name coverage artifact
       id: artifact
       shell: bash
       env:
         DIR: ${{ inputs.working-directory }}
         REPORT: ${{ inputs.report-path }}
+        JOB_INDEX: ${{ strategy.job-index }}
+        JOB_TOTAL: ${{ strategy.job-total }}
       run: |
         slug=$(echo "$DIR" | sed 's#^\./##; s#/*$##; s#[^A-Za-z0-9._-]#-#g')
         if [ -z "$slug" ] || [ "$slug" = "." ]; then
           slug=root
         fi
-        echo "name=coverage-$slug-$(basename "$REPORT")" >> "$GITHUB_OUTPUT"
+        name="coverage-$slug-$(basename "$REPORT")"
+        if [ "${JOB_TOTAL:-1}" -gt 1 ]; then
+          name="$name-$JOB_INDEX"
+        fi
+        echo "name=$name" >> "$GITHUB_OUTPUT"
 
     - uses: actions/upload-artifact@v4
       with:

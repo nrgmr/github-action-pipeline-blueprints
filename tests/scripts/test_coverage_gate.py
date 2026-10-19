@@ -46,6 +46,13 @@ class TestOverallCoverage:
         )
         assert coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body)) == 50.0
 
+    def test_lcov_counts_totals_of_records_without_da_lines(self, tmp_path):
+        # a.ts has one of two lines covered by DA. b.ts has only totals, 3 of 4 covered.
+        body = "SF:a.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:b.ts\nLF:4\nLH:3\nend_of_record\n"
+        assert coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body)) == pytest.approx(
+            4 * 100 / 6
+        )
+
     def test_empty_lcov_errors(self, tmp_path):
         with pytest.raises(coverage_gate.GateError):
             coverage_gate.overall_coverage(write(tmp_path, "lcov.info", ""))

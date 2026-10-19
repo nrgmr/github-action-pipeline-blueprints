@@ -87,15 +87,21 @@ def _overall_lcov(path: Path) -> float:
     # Merge by file and line, as the changed lines check does, so a trace with several
     # records for one file, such as concatenated per-test reports, is not double counted.
     merged = [hit for lines in _lines_lcov(path).values() for hit in lines.values()]
-    if merged:
-        return _percent(sum(merged), len(merged), path)
-    # A trace without DA records still carries its LF and LH totals.
-    found = hit = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("LF:"):
-            found += int(line[3:])
+    found, hit = len(merged), sum(merged)
+    # A record without DA lines still carries its LF and LH totals, so add those per record
+    # rather than only when the whole trace lacks DA lines.
+    has_da, record_found, record_hit = False, 0, 0
+    for line in [*path.read_text(encoding="utf-8").splitlines(), "end_of_record"]:
+        if line.startswith("DA:"):
+            has_da = True
+        elif line.startswith("LF:"):
+            record_found = int(line[3:])
         elif line.startswith("LH:"):
-            hit += int(line[3:])
+            record_hit = int(line[3:])
+        elif line == "end_of_record":
+            if not has_da:
+                found, hit = found + record_found, hit + record_hit
+            has_da, record_found, record_hit = False, 0, 0
     return _percent(hit, found, path)
 
 
