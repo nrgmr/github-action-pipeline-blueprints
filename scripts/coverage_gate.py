@@ -86,22 +86,30 @@ def _overall_xml(path: Path) -> float:
 def _overall_lcov(path: Path) -> float:
     # Merge by file and line, as the changed lines check does, so a trace with several
     # records for one file, such as concatenated per-test reports, is not double counted.
-    merged = [hit for lines in _lines_lcov(path).values() for hit in lines.values()]
+    detailed = _lines_lcov(path)
+    merged = [hit for lines in detailed.values() for hit in lines.values()]
     found, hit = len(merged), sum(merged)
-    # A record without DA lines still carries its LF and LH totals, so add those per record
-    # rather than only when the whole trace lacks DA lines.
-    has_da, record_found, record_hit = False, 0, 0
+    # A record without DA lines still carries its LF and LH totals, so count those too. A file
+    # that has DA lines anywhere in the trace is already counted line by line, and a file with
+    # several totals-only records is counted once, at its largest figures.
+    totals: dict[str, tuple[int, int]] = {}
+    name, has_da, record_found, record_hit = "", False, 0, 0
     for line in [*path.read_text(encoding="utf-8").splitlines(), "end_of_record"]:
-        if line.startswith("DA:"):
+        if line.startswith("SF:"):
+            name = _normalise(line[3:])
+        elif line.startswith("DA:"):
             has_da = True
         elif line.startswith("LF:"):
             record_found = int(line[3:])
         elif line.startswith("LH:"):
             record_hit = int(line[3:])
         elif line == "end_of_record":
-            if not has_da:
-                found, hit = found + record_found, hit + record_hit
-            has_da, record_found, record_hit = False, 0, 0
+            if name and not has_da and not detailed.get(name):
+                old_found, old_hit = totals.get(name, (0, 0))
+                totals[name] = (max(old_found, record_found), max(old_hit, record_hit))
+            name, has_da, record_found, record_hit = "", False, 0, 0
+    found += sum(f for f, _ in totals.values())
+    hit += sum(h for _, h in totals.values())
     return _percent(hit, found, path)
 
 
@@ -149,10 +157,13 @@ def _lines_xml(path: Path) -> dict[str, dict[int, bool]]:
 def _lines_lcov(path: Path) -> dict[str, dict[int, bool]]:
     files: dict[str, dict[int, bool]] = {}
     lines: dict[int, bool] | None = None
-    for row in path.read_text(encoding="utf-8").splitlines():
+    for position, row in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if row.startswith("SF:"):
             lines = files.setdefault(_normalise(row[3:]), {})
-        elif row.startswith("DA:") and lines is not None:
+        elif row.startswith(("DA:", "LF:", "LH:")) and lines is None:
+            # Skipping the record would drop its coverage without any sign, so fail instead.
+            raise GateError(f"{path}:{position}: coverage record has no SF line")
+        elif row.startswith("DA:"):
             number, hits = row[3:].split(",")[:2]
             lines[int(number)] = lines.get(int(number), False) or int(hits) > 0
         elif row == "end_of_record":

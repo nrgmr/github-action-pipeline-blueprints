@@ -53,6 +53,33 @@ class TestOverallCoverage:
             4 * 100 / 6
         )
 
+    def test_lcov_totals_do_not_double_count_a_file_that_has_da_lines(self, tmp_path):
+        # The second a.ts record has only totals, but DA lines already count a.ts, so
+        # adding them would report 25%.
+        body = (
+            "SF:a.ts\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nend_of_record\n"
+            "SF:a.ts\nLF:2\nLH:0\nend_of_record\n"
+        )
+        assert coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body)) == 50.0
+
+    def test_lcov_totals_before_da_lines_do_not_double_count_a_file(self, tmp_path):
+        # Record order must not matter: DA lines found later still replace earlier totals.
+        body = (
+            "SF:a.ts\nLF:2\nLH:0\nend_of_record\n"
+            "SF:a.ts\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nend_of_record\n"
+        )
+        assert coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body)) == 50.0
+
+    def test_lcov_counts_repeated_totals_only_records_once(self, tmp_path):
+        body = "SF:b.ts\nLF:4\nLH:3\nend_of_record\nSF:b.ts\nLF:4\nLH:1\nend_of_record\n"
+        assert coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body)) == 75.0
+
+    @pytest.mark.parametrize("orphan", ["DA:1,1", "LF:1", "LH:1"])
+    def test_lcov_record_without_a_file_name_errors(self, tmp_path, orphan):
+        body = f"SF:a.ts\nDA:1,1\nend_of_record\n{orphan}\nend_of_record\n"
+        with pytest.raises(coverage_gate.GateError, match=r":4: coverage record has no SF line"):
+            coverage_gate.overall_coverage(write(tmp_path, "lcov.info", body))
+
     def test_empty_lcov_errors(self, tmp_path):
         with pytest.raises(coverage_gate.GateError):
             coverage_gate.overall_coverage(write(tmp_path, "lcov.info", ""))
