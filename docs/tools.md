@@ -19,6 +19,7 @@ uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
 - [docker-build-push.yml](#docker-build-pushyml)
 - [Environment variables](#environment-variables)
 - [image-scan.yml](#image-scanyml)
+- [java-test.yml](#java-testyml)
 - [python-lint-test.yml (deprecated)](#python-lint-testyml-deprecated)
 - [python-lint.yml](#python-lintyml)
 - [python-openapi-generate.yml](#python-openapi-generateyml)
@@ -94,14 +95,70 @@ jobs:
 
 ---
 
+## java-test.yml
+
+Runs a Maven build and test with JaCoCo coverage, then applies the [coverage gate](#coverage-gate). The service needs no JaCoCo configuration in its `pom.xml`. It uses `./mvnw` when it is executable and `mvn` otherwise, so commit the wrapper with its executable bit set (`git update-index --chmod=+x mvnw`). JaCoCo is pinned to 0.8.12, which supports JDKs up to 22.
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project-dir` | No | `.` | Directory containing the `pom.xml` |
+| `module` | No | `""` | Maven module to build and test, relative to `project-dir`. Empty builds `project-dir` itself. See [Multi-module builds](#multi-module-builds). |
+| `java-version` | No | `17` | Temurin JDK version |
+| `coverage-metric` | No | `line` | Metric behind `min-coverage`, the ratchet, and the baseline margin: `line` or `instruction`. Instruction coverage weights each line by its bytecode, so DTOs, mappers, and other large but lightly tested code pull the figure down more than they do under `line`, which can read well below it for the same tests. Changing it changes every figure, so measure a new baseline on the CI runner first. The changed lines check stays line based. |
+
+The workflow reads the report from `target/site/jacoco/jacoco.xml`, so the project must use the standard Maven layout. If the module's surefire configuration sets `<argLine>`, include `@{argLine}` in it, or the JaCoCo agent is dropped and the report shows no coverage. The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs) and [environment variables](#environment-variables) options.
+
+### Usage
+
+```yaml
+jobs:
+  api-test:
+    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    with:
+      project-dir: api
+```
+
+### Multi-module builds
+
+A parent `pom.xml` with `<packaging>pom</packaging>` produces no coverage report of its own, because JaCoCo writes one per module. Set `module` to the module to test, once per module, usually with a matrix. The workflow runs `mvn -pl <module> -am`, so the modules it depends on are built too, and reads the report from `<project-dir>/<module>/target/site/jacoco/jacoco.xml`. `baseline-path` stays relative to `project-dir`, so give each module its own file such as `service/coverage-baseline.json`. The coverage artifact is named after it, such as `coverage-api-service-jacoco.xml`.
+
+```yaml
+jobs:
+  api-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: service
+            min-coverage: "63"
+            baseline-path: service/coverage-baseline.json
+          - module: web
+            min-coverage: "60"
+            baseline-path: web/coverage-baseline.json
+    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    with:
+      project-dir: api
+      module: ${{ matrix.module }}
+      min-coverage: ${{ matrix.min-coverage }}
+      baseline-path: ${{ matrix.baseline-path }}
+```
+
+- Modules it depends on run their tests again, so each call pays for them. A module with many upstream dependencies costs more CI time.
+- Coverage is measured per module. There is no combined figure across modules.
+- `module` is a path relative to `project-dir`, not an artifact ID, so `-pl` resolves it from the reactor root.
+
+---
+
 ## Coverage gate
 
-`python-test.yml` finishes by running the gate against the coverage report it produces. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
+`python-test.yml` and `java-test.yml` finish by running the same gate against the coverage report they produce. Four checks apply. The ratchet and the baseline margin are skipped when `baseline-path` is empty, and when the file does not exist. The changed lines check is off until `min-changed-coverage` is set:
 
-- **Overall:** total line coverage must be at least `min-coverage`.
+- **Overall:** total line coverage must be at least `min-coverage`. `java-test.yml` can measure instruction coverage instead with `coverage-metric`.
 - **Ratchet:** overall coverage must not fall below the value in `baseline-path`, a JSON file such as `{"overall": 83.2}` committed in the service repo. The comparison rounds both the measured coverage and the baseline to two decimals. The overall minimum is compared unrounded, so 79.996% fails an 80% minimum even though it displays as 80.00%. A missing file skips the check and logs a notice, so a team can adopt the ratchet by committing the first baseline. Check the notice if the ratchet never fails, since a mistyped path looks the same. An empty or unrecognised report is an error, not a pass.
 - **Baseline margin:** overall coverage must not exceed the baseline by more than `baseline-margin` percentage points, `1` by default. The baseline file is edited by hand, so without this check it falls behind as coverage improves and the ratchet protects less over time. A pull request that adds tests past the margin fails until it also raises `overall` in the baseline file, and the failure message gives the value to write. Set `baseline-margin` to `"0"` to require an exact match, or to an empty string to turn the check off. Like the others, it only warns when `fail-on-threshold` is `false`.
-- **Changed lines:** the lines a pull request adds or modifies must reach `min-changed-coverage` combined, so new code is held to a standard even when the overall figure is high enough to absorb it. Only lines the report marks as executable count, so comments, blank lines, and imports do not. The figure is covered lines over total lines across all files, not an average of per-file percentages. Files the report does not cover, such as tests, docs, and workflow files, are ignored, and the check is skipped with a notice when no changed line appears in the report. It runs only on `pull_request` events, comparing the merge commit with the base branch, and is skipped with a notice on other events. It needs a git checkout, so run it after `actions/checkout`. The job summary and pull request comment list each changed file under `working-directory` by its path relative to `working-directory`, lowest coverage first and capped at 20. A changed file the report omits, such as one excluded from coverage, is skipped. When a report path could name several files and one of them changed, the job logs a warning that names the file it used. The usual cause is a `working-directory` that spans several modules.
+- **Changed lines:** the lines a pull request adds or modifies must reach `min-changed-coverage` combined, so new code is held to a standard even when the overall figure is high enough to absorb it. Only lines the report marks as executable count, so comments, blank lines, and imports do not, and an untested edit to a large, well-covered file still fails. The figure is covered lines over total lines across all files, not an average of per-file percentages. Files the report does not cover, such as tests, docs, and workflow files, are ignored, and the check is skipped with a notice when no changed line appears in the report. It runs only on `pull_request` events, comparing the merge commit with the base branch, and is skipped with a notice on other events. The job summary and pull request comment list each changed file with the share of its changed lines that are covered and a pass or fail mark against `min-changed-coverage`, lowest first and capped at 20, so a failure points at where to add tests. Only files under the project directory (`project-dir`, plus `module` for Java) are considered, and each is listed by its path relative to that directory. A report path is matched to the one tracked file it names, so a source root that differs from the project root needs no configuration, and a changed file the report omits, such as one excluded from coverage, is skipped. When a report path could name several files and one of them changed, the job logs a warning that names the file it used.
 
 A reviewer should question any pull request that lowers a baseline file, because it quietly weakens the ratchet. Measure the first baseline on the CI runner, not locally, since results can differ by a few hundredths between platforms.
 
@@ -120,13 +177,13 @@ These inputs configure the thresholds. [coverage-gate](#coverage-gate-1) lists t
 | `baseline-margin` | No | `1` | Maximum percentage points coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables it. |
 | `min-changed-coverage` | No | `""` | Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on `pull_request` events, after the repository is checked out, and counts only lines the report marks as executable. Empty disables it. |
 | `fail-on-threshold` | No | `true` | When `false`, a violation is reported as a warning and the job passes. Use it as a temporary on-ramp, not a permanent setting. |
-| `comment-on-pr` | No | `false` | Post the result as a pull request comment, updated in place on each run, with one comment per report so calls for different projects do not overwrite each other. The calling workflow must grant `pull-requests: write`. Fork PRs cannot comment, and the comment step never fails the job. |
+| `comment-on-pr` | No | `false` | Post the result as a pull request comment, updated in place on each run, with one comment per report so calls for different modules do not overwrite each other. The calling workflow must grant `pull-requests: write`. Fork PRs cannot comment, and the comment step never fails the job. |
 
 ---
 
 ## Environment variables
 
-The [export-env-vars](#export-env-vars) and [clear-env-vars](#clear-env-vars) actions pass environment variables, such as registry credentials, to the build and test steps of a job. Use them for what a private dependency needs, such as `UV_INDEX_*_PASSWORD` for a private Python index. The actions do not know any variable names, so a new need never requires a change here.
+The [export-env-vars](#export-env-vars) and [clear-env-vars](#clear-env-vars) actions pass environment variables, such as registry credentials, to the build and test steps of a job. Use them for what a private dependency needs, such as Maven repository credentials read by `settings.xml`, or `UV_INDEX_*_PASSWORD` for a private Python index. The actions do not know any variable names, so a new need never requires a change here.
 
 Run `export-env-vars` right before the first step that needs the variables, and `clear-env-vars` with `if: always()` right after the last one, so the coverage gate and anything that runs after it never see the values. `export-env-vars` can run more than once before the single clear step.
 
@@ -724,12 +781,13 @@ The step that ends the exposure started by [export-env-vars](#export-env-vars). 
 
 ### coverage-gate
 
-Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any language. The inputs `min-coverage`, `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr` behave as described under [Coverage gate](#coverage-gate). The remaining inputs are:
+Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any language. The inputs `min-coverage`, `coverage-metric` (`line` or `instruction`, the latter for JaCoCo only), `baseline-path`, `baseline-margin`, `min-changed-coverage`, `fail-on-threshold`, and `comment-on-pr` behave as described under [Coverage gate](#coverage-gate). The remaining inputs are:
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `report-path` | Yes | | Coverage report, relative to `working-directory` |
 | `working-directory` | No | `.` | Directory the report and `baseline-path` are relative to. Only files under it count for the changed lines check. In a repository with several modules, set it to the module folder and call the gate once per module, so a report path can only match files in that module. |
+| `title` | No | working directory | Names the report in the summary and comment heading as `Coverage: <title>`. The test workflows leave it unset, so each module of a multi-module build is told apart by its directory. The repository root adds nothing. |
 | `github-token` | No | `github.token` | Token used to fetch the base commit for the changed lines check and to post the pull request comment. The comment is updated in place only when a bot posted it, so a personal access token creates a new comment on every run. Keep the default unless the job needs another token. |
 
 ```yaml

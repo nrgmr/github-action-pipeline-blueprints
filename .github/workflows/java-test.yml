@@ -1,0 +1,130 @@
+name: Java test
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: "Directory containing the Maven project (pom.xml)"
+        type: string
+        default: "."
+      module:
+        description: >
+          Maven module to build and test, relative to project-dir, for a
+          multi-module build. Empty builds project-dir itself. Modules it
+          depends on are built and tested too, and the coverage report is read
+          from the module's own directory.
+        type: string
+        default: ""
+      java-version:
+        description: "JDK version (Temurin)"
+        type: string
+        default: "17"
+      min-coverage:
+        description: "Minimum overall line coverage percentage"
+        type: string
+        default: "80"
+      coverage-metric:
+        description: >
+          Metric behind min-coverage, the ratchet, and the baseline margin:
+          line or instruction. The changed lines check is always line based.
+        type: string
+        default: "line"
+      baseline-path:
+        description: "JSON file like {\"overall\": 83.2}, relative to project-dir. Overall coverage must not fall below it. Empty disables the ratchet."
+        type: string
+        default: ""
+      baseline-margin:
+        description: "Maximum percentage points overall coverage may exceed the baseline before the job fails, so a change that raises coverage must also raise the baseline file. Applies only when `baseline-path` is set and the file exists. Empty disables."
+        type: string
+        default: "1"
+      min-changed-coverage:
+        description: "Minimum combined line coverage percentage of the lines a pull request adds or changes. Runs only on pull_request events and counts only lines the report marks as executable. Empty disables."
+        type: string
+        default: ""
+      fail-on-threshold:
+        description: "Fail the job on a coverage violation. When false the violation is reported as a warning."
+        type: boolean
+        default: true
+      comment-on-pr:
+        description: "Post the coverage result as a pull request comment. The caller must grant pull-requests: write."
+        type: boolean
+        default: false
+      env-vars:
+        description: 'JSON object of plain environment variables for the build and test steps, such as {"FOO":"bar"}. Values must be strings.'
+        type: string
+        default: ""
+    secrets:
+      SECRET_ENV_VARS:
+        description: >
+          JSON object of secret environment variables for the build and test
+          steps, such as {"NODE_AUTH_TOKEN":"..."}. Values are masked in logs.
+          Optional.
+        required: false
+
+env:
+  # Invoked by full coordinates so callers need no JaCoCo configuration in their pom.xml.
+  JACOCO: org.jacoco:jacoco-maven-plugin:0.8.12
+
+jobs:
+  test:
+    name: maven
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .rp-ci-tooling
+          sparse-checkout: |
+            .github/actions/clear-env-vars
+            .github/actions/coverage-gate
+            .github/actions/export-env-vars
+            scripts/coverage_gate.py
+            scripts/export_env_vars.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Export caller environment variables
+        uses: ./.rp-ci-tooling/.github/actions/export-env-vars
+        with:
+          env-vars: ${{ inputs.env-vars }}
+          secret-env-vars: ${{ secrets.SECRET_ENV_VARS }}
+      - name: Build and test
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          mvn_cmd=mvn
+          if [ -x ./mvnw ]; then
+            mvn_cmd=./mvnw
+          fi
+          # -am builds the modules this one depends on, which a module cannot
+          # compile without.
+          module_args=()
+          if [ -n "$MODULE" ]; then
+            module_args=(-pl "$MODULE" -am)
+          fi
+          "$mvn_cmd" -B "${module_args[@]}" "$JACOCO:prepare-agent" test "$JACOCO:report"
+      - name: Clear caller environment variables
+        if: always()
+        uses: ./.rp-ci-tooling/.github/actions/clear-env-vars
+      - uses: ./.rp-ci-tooling/.github/actions/coverage-gate
+        with:
+          report-path: target/site/jacoco/jacoco.xml
+          working-directory: ${{ inputs.module && format('{0}/{1}', inputs.project-dir, inputs.module) || inputs.project-dir }}
+          min-coverage: ${{ inputs.min-coverage }}
+          coverage-metric: ${{ inputs.coverage-metric }}
+          # The gate runs in the module directory, so anchor the path to project-dir
+          # to keep it relative to project-dir as documented.
+          baseline-path: ${{ inputs.baseline-path && format('{0}/{1}/{2}', github.workspace, inputs.project-dir, inputs.baseline-path) || '' }}
+          baseline-margin: ${{ inputs.baseline-margin }}
+          min-changed-coverage: ${{ inputs.min-changed-coverage }}
+          fail-on-threshold: ${{ inputs.fail-on-threshold }}
+          comment-on-pr: ${{ inputs.comment-on-pr }}
