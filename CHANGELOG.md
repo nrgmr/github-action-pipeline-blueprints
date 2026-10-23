@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/nrgmr/rp-ci-tooling/compare/v0.4.0...v0.5.0) (2026-10-23)
+
+
+### Features
+
+* **ci:** add a shared coverage gate AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([fb6923b](https://github.com/nrgmr/rp-ci-tooling/commit/fb6923b8da1d5817993202764fccc8aa216e72cf))
+* **ci:** add a shared coverage gate AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([d2bbcc3](https://github.com/nrgmr/rp-ci-tooling/commit/d2bbcc3a7f0712e3863199ede392b5180edbd564))
+
+
+### Bug Fixes
+
+* **ci:** count LCOV totals once per file and reject records without a file AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([96a4c2e](https://github.com/nrgmr/rp-ci-tooling/commit/96a4c2ebeb6de439ac998ace5f816b54324a1c8a))
+* **ci:** harden coverage gate file matching and input handling AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([81d4bd6](https://github.com/nrgmr/rp-ci-tooling/commit/81d4bd62affed11f7dfb38182b1a736d0d27fbbe))
+* **ci:** suffix matrix artifact names and count LCOV totals per record AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([8f69e00](https://github.com/nrgmr/rp-ci-tooling/commit/8f69e00f2df9c70def2adfc7b38c46f997060de6))
+
 ## [0.4.0](https://github.com/nrgmr/rp-ci-tooling/compare/v0.3.0...v0.4.0) (2026-09-30)
 
 
