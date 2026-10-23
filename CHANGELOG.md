@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.0](https://github.com/nrgmr/rp-ci-tooling/compare/v0.5.0...v0.6.0) (2026-10-23)
+
+
+### Features
+
+* **ci:** add environment variable export and clear actions AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([354a961](https://github.com/nrgmr/rp-ci-tooling/commit/354a96141d135983db4942c1ccea9513f91857f2))
+* **ci:** add environment variable export and clear actions AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([c191ed7](https://github.com/nrgmr/rp-ci-tooling/commit/c191ed74aeec31249d68bdd3a8f96575157d4c01))
+* **ci:** add Python test and lint workflows AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([95986e9](https://github.com/nrgmr/rp-ci-tooling/commit/95986e992de228a12c27f0ad695489112f0d20f9))
+* **ci:** add Python test and lint workflows AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([2fe5ae8](https://github.com/nrgmr/rp-ci-tooling/commit/2fe5ae864180fc226ab8f5e0df2980b9e5fc16fd))
+* **ci:** add the Java test workflow AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([55bd37c](https://github.com/nrgmr/rp-ci-tooling/commit/55bd37cd63d5a1ae37aeab0cb58f55c149886d83))
+* **ci:** add the Java test workflow AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([f1bac1b](https://github.com/nrgmr/rp-ci-tooling/commit/f1bac1bfb6742dfdae86d1cb384281cd0b0a42d2))
+* **ci:** add the TypeScript test workflow AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([d258dc4](https://github.com/nrgmr/rp-ci-tooling/commit/d258dc486c1ca639bef1c20331736b2bf64c6867))
+* **ci:** add the TypeScript test workflow AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([4aef61b](https://github.com/nrgmr/rp-ci-tooling/commit/4aef61b3f21b379e05d486c613fd2ce9dfa50449))
+
+
+### Bug Fixes
+
+* **ci:** accumulate exported env names and reserve the bookkeeping variable AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([631fb5f](https://github.com/nrgmr/rp-ci-tooling/commit/631fb5fcf46529d8c1bebd289164c8120bf0bd2f))
+* **ci:** resolve java baseline-path against project-dir AB[#33690](https://github.com/nrgmr/rp-ci-tooling/issues/33690) ([29f8dfe](https://github.com/nrgmr/rp-ci-tooling/commit/29f8dfeb66171e2f81e067f27732fac28c4c02c5))
+
 ## [0.5.0](https://github.com/nrgmr/rp-ci-tooling/compare/v0.4.0...v0.5.0) (2026-10-23)
 
 
