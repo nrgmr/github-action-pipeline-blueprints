@@ -288,6 +288,7 @@ class TestOasdiffExitCodeHandling:
         assert rc == 1
 
 
+@pytest.mark.integration
 @needs_oasdiff
 class TestApiVersionScript:
     def test_no_changes_passes(self):
@@ -341,6 +342,7 @@ class TestApiVersionScript:
         assert "/v1/auth/verify -> /v2/auth/verify" in out
 
 
+@pytest.mark.integration
 @needs_oasdiff
 class TestApiVersionOutputs:
     def outputs(self, tmp_path: Path, baseline: str, current: str) -> tuple[int, dict[str, str]]:
