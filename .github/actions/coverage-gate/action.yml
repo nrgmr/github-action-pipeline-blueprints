@@ -147,7 +147,7 @@ runs:
           const fs = require('fs');
           if (!fs.existsSync(process.env.SUMMARY_FILE)) return;
           // One comment per report, so calls for different modules do not overwrite each other.
-          const marker = `<!-- rp-ci-tooling:${process.env.ARTIFACT_NAME} -->`;
+          const marker = `<!-- github-action-pipeline-blueprints:${process.env.ARTIFACT_NAME} -->`;
           const body = marker + '\n' + fs.readFileSync(process.env.SUMMARY_FILE, 'utf8');
           const comments = await github.paginate(github.rest.issues.listComments, {
             issue_number: context.issue.number,
