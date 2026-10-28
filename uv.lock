@@ -183,7 +183,7 @@ wheels = [
 
 [[package]]
 name = "github-action-pipeline-blueprints"
-version = "0.5.0"
+version = "0.6.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
