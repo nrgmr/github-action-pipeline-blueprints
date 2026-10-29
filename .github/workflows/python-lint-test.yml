@@ -23,7 +23,7 @@ jobs:
     steps:
       - run: >-
           echo "::warning title=python-lint-test.yml is deprecated::Replace it with
-          python-lint.yml and python-test.yml. See docs/tools.md in rp-ci-tooling."
+          python-lint.yml and python-test.yml. See docs/tools.md in github-action-pipeline-blueprints."
 
   lint:
     name: Lint (ruff)

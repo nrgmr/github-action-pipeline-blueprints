@@ -1,4 +1,4 @@
-# rp-ci-tooling
+# github-action-pipeline-blueprints
 
 Reusable GitHub Actions workflows for Research Platform services. Service teams call these workflows to run common CI/CD gates without duplicating logic in every repo.
 
@@ -17,20 +17,20 @@ Releases follow semantic versioning and are automated via release-please. See [d
 Use an exact tag when CI behavior should only change during an intentional upgrade:
 
 ```yaml
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@v1.2.0
 ```
 
 Use the floating major tag when backward-compatible updates should apply automatically:
 
 ```yaml
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1
+uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@v1
 ```
 
 Never pin to a branch:
 
 ```yaml
 # Do not use this.
-uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@main
+uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@main
 ```
 
 ## This repo's own CI

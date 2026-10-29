@@ -182,7 +182,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rp-ci-tooling"
+name = "github-action-pipeline-blueprints"
 version = "0.6.0"
 source = { virtual = "." }
 

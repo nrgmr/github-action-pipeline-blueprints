@@ -5,7 +5,7 @@ Detailed reference for each reusable workflow in this repo. For pinning and vers
 Examples use the sample tag `v1.2.0`; replace it with the released tag the service is adopting. Do not pin service workflows to `@main`.
 
 ```yaml
-uses: nrgmr/rp-ci-tooling/.github/workflows/<workflow>.yml@v1.2.0
+uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/<workflow>.yml@v1.2.0
 ```
 
 ## Contents
@@ -52,7 +52,7 @@ on:
 
 jobs:
   lint:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-lint.yml@v1.2.0
     with:
       project-dir: sidecar
 ```
@@ -87,7 +87,7 @@ permissions:
 
 jobs:
   test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@v1.2.0
     with:
       project-dir: sidecar
       min-coverage: "85"
@@ -116,7 +116,7 @@ The workflow reads the report from `target/site/jacoco/jacoco.xml`, so the proje
 ```yaml
 jobs:
   api-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/java-test.yml@v1.2.0
     with:
       project-dir: api
 ```
@@ -138,7 +138,7 @@ jobs:
           - module: web
             min-coverage: "60"
             baseline-path: web/coverage-baseline.json
-    uses: nrgmr/rp-ci-tooling/.github/workflows/java-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/java-test.yml@v1.2.0
     with:
       project-dir: api
       module: ${{ matrix.module }}
@@ -174,7 +174,7 @@ The remaining inputs are the shared [coverage gate inputs](#coverage-gate-inputs
 ```yaml
 jobs:
   ui-test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/typescript-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/typescript-test.yml@v1.2.0
     with:
       project-dir: ui
 ```
@@ -219,7 +219,7 @@ Run `export-env-vars` right before the first step that needs the variables, and 
 
 ```yaml
 steps:
-  - uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
+  - uses: nrgmr/github-action-pipeline-blueprints/.github/actions/export-env-vars@v1.2.0
     with:
       env-vars: '{"CI_REGION":"us-west1"}'
       # toJSON quotes and escapes the value, so a quote or newline in it cannot break the JSON.
@@ -227,7 +227,7 @@ steps:
   - run: uv sync && uv run pytest
   - name: Clear caller environment variables
     if: always()
-    uses: nrgmr/rp-ci-tooling/.github/actions/clear-env-vars@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/actions/clear-env-vars@v1.2.0
 ```
 
 ### Limits
@@ -261,9 +261,9 @@ It runs the original lint and test jobs, without coverage, and adds a deprecatio
 ```yaml
 jobs:
   lint:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-lint.yml@v1.2.0
   test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@v1.2.0
     with:
       fail-on-threshold: false # while adopting coverage; remove once passing
 ```
@@ -316,7 +316,7 @@ on:
 
 jobs:
   api-checks:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-openapi-generate.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-openapi-generate.yml@v1.2.0
     with:
       project-dir: sidecar
       gen-spec-env: '{"UM_BASE_URL": "http://localhost", "PUBLIC_ORIGIN": "http://localhost"}'
@@ -417,7 +417,7 @@ on:
 
 jobs:
   docker:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/docker-build-push.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/docker-build-push.yml@v1.2.0
     with:
       image-name: my-service-sidecar
       dockerfile: ./sidecar/Dockerfile
@@ -457,7 +457,7 @@ on:
 
 jobs:
   secret-scan:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/secret-scan.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/secret-scan.yml@v1.2.0
 ```
 
 ---
@@ -492,7 +492,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: nrgmr/rp-ci-tooling/.github/workflows/image-scan.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/image-scan.yml@v1.2.0
     with:
       image-ref: us-west1-docker.pkg.dev/my-gcp-project/my-service/my-image:abc1234
       workload-identity-provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
@@ -598,7 +598,7 @@ permissions:
 
 jobs:
   open:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/back-merge.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/back-merge.yml@v1.2.0
     # Only needed if your branch names differ from the develop / staging / main defaults:
     # with:
     #   develop-branch: dev
@@ -643,7 +643,7 @@ permissions:
 
 jobs:
   approve:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/approve-staging.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/approve-staging.yml@v1.2.0
     # Only needed if your staging branch has a different name:
     # with:
     #   staging-branch: stage
@@ -701,7 +701,7 @@ permissions:
 
 jobs:
   propose:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/release-promotion.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/release-promotion.yml@v1.2.0
     with:
       source-branch: develop
       target-branch: staging
@@ -723,7 +723,7 @@ permissions:
 
 jobs:
   propose:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/release-promotion.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/release-promotion.yml@v1.2.0
     with:
       source-branch: staging
       target-branch: main
@@ -751,18 +751,18 @@ on:
 
 jobs:
   lint:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-lint.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-lint.yml@v1.2.0
     with:
       project-dir: sidecar
 
   test:
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-test.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-test.yml@v1.2.0
     with:
       project-dir: sidecar
 
   api-checks:
     needs: [lint, test]
-    uses: nrgmr/rp-ci-tooling/.github/workflows/python-openapi-generate.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/python-openapi-generate.yml@v1.2.0
     with:
       project-dir: sidecar
       gen-spec-env: '{"UM_BASE_URL": "http://localhost", "PUBLIC_ORIGIN": "http://localhost"}'
@@ -776,7 +776,7 @@ jobs:
 
   docker:
     needs: [lint, test, api-checks]
-    uses: nrgmr/rp-ci-tooling/.github/workflows/docker-build-push.yml@v1.2.0
+    uses: nrgmr/github-action-pipeline-blueprints/.github/workflows/docker-build-push.yml@v1.2.0
     with:
       image-name: my-service-sidecar
       dockerfile: ./sidecar/Dockerfile
@@ -807,7 +807,7 @@ The step that ends the exposure started by [export-env-vars](#export-env-vars). 
 ```yaml
 - name: Clear caller environment variables
   if: always()
-  uses: nrgmr/rp-ci-tooling/.github/actions/clear-env-vars@v1.2.0
+  uses: nrgmr/github-action-pipeline-blueprints/.github/actions/clear-env-vars@v1.2.0
 ```
 
 ### coverage-gate
@@ -824,7 +824,7 @@ Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any lang
 ```yaml
 # Replace v1.2.0 with the released tag your service is adopting.
 - uses: actions/checkout@v4
-- uses: nrgmr/rp-ci-tooling/.github/actions/coverage-gate@v1.2.0
+- uses: nrgmr/github-action-pipeline-blueprints/.github/actions/coverage-gate@v1.2.0
   with:
     report-path: coverage.xml
     min-coverage: "80"
@@ -837,7 +837,7 @@ Coverage thresholds for a JaCoCo, Cobertura, or LCOV report produced by any lang
 The step behind [Environment variables](#environment-variables). Inputs `env-vars` and `secret-env-vars` each take a JSON object of string values, with an empty value skipping it, and the limits above apply. A later call adds to the names an earlier call recorded, so one `clear-env-vars` step blanks every batch. Secret values are masked before anything is written.
 
 ```yaml
-- uses: nrgmr/rp-ci-tooling/.github/actions/export-env-vars@v1.2.0
+- uses: nrgmr/github-action-pipeline-blueprints/.github/actions/export-env-vars@v1.2.0
   with:
     secret-env-vars: '{"NODE_AUTH_TOKEN":${{ toJSON(secrets.REGISTRY_TOKEN) }}}'
 ```
@@ -852,7 +852,7 @@ Best-effort post to a Teams webhook. Plain text is wrapped in an Adaptive Card, 
 | `message` | Yes | | Plain text, or a complete JSON object payload |
 
 ```yaml
-- uses: nrgmr/rp-ci-tooling/.github/actions/notify-teams@v1.2.0
+- uses: nrgmr/github-action-pipeline-blueprints/.github/actions/notify-teams@v1.2.0
   with:
     webhook-url: ${{ secrets.TEAMS_WEBHOOK_URL }}
     message: "Deploy of my-service finished."

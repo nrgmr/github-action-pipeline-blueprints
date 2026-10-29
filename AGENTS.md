@@ -65,7 +65,7 @@ checks such as Spectral, oasdiff, GCP baseline fetch/publish, and Teams
 notifications belong in `.github/actions/openapi-checks/`.
 
 **Script checkout inside workflows:** always use `job.workflow_repository` and
-`job.workflow_sha` when checking out `rp-ci-tooling` from within one of its own
+`job.workflow_sha` when checking out `github-action-pipeline-blueprints` from within one of its own
 reusable workflows. These identify the repository and commit for the workflow
 file that defines the current job. Never hardcode a tag or branch because it
 would drift from the workflow version the caller pinned.

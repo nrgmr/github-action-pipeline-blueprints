@@ -153,7 +153,7 @@ runs:
       uses: actions/github-script@v7
       with:
         script: |
-          const marker = '<!-- rp-ci-tooling:api-checks:new-service -->';
+          const marker = '<!-- github-action-pipeline-blueprints:api-checks:new-service -->';
           const heading = '### API checks - new service';
           const body = [
             heading,
@@ -206,7 +206,7 @@ runs:
       uses: actions/github-script@v7
       with:
         script: |
-          const marker = '<!-- rp-ci-tooling:api-checks:breaking-change -->';
+          const marker = '<!-- github-action-pipeline-blueprints:api-checks:breaking-change -->';
           const heading = '### API checks - breaking change';
           const body = [
             heading,
@@ -277,7 +277,7 @@ runs:
       with:
         script: |
           const override = '${{ inputs.override-version-limit }}' === 'true';
-          const marker = '<!-- rp-ci-tooling:api-checks:version-limit -->';
+          const marker = '<!-- github-action-pipeline-blueprints:api-checks:version-limit -->';
           const heading = override
             ? '### API checks - version limit override active'
             : '### API checks - version limit violation';
